@@ -28,13 +28,22 @@ Upstream model: [code](https://github.com/TencentARC/Pixal3D) ·
 
 ## Install (cloud pod / Linux)
 
+**Option A — ComfyUI-Manager (works on restricted cloud shells).** Some
+providers (e.g. RunComfy's web terminal) whitelist shell commands and block
+`python`. Use Manager's **"Install via Git URL"** with
+`https://github.com/AzogDerSchaender/ComfyUI-Pixal3D.git` — Manager runs
+`install.py` with ComfyUI's own python, which builds `vendor/`, verifies every
+import, AND auto-runs the onboarding weight migration. Watch the server log
+for `[pixal3d-install]` lines, then restart ComfyUI.
+
+**Option B — shell (when `python` is available):**
+
 ```bash
 cd ComfyUI/custom_nodes
 git clone https://github.com/AzogDerSchaender/ComfyUI-Pixal3D.git
 cd ComfyUI-Pixal3D
 python onboard.py        # preflight: env report + weight inventory
-python onboard.py --migrate   # reuse weights left by OTHER Pixal3D packs
-python install.py        # use ComfyUI's own python (its venv python)
+python install.py        # builds vendor/ + auto-runs onboarding --migrate
 ```
 
 `onboard.py` scans `ComfyUI/models/` and the HF/torch caches for Pixal3D,

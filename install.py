@@ -279,6 +279,29 @@ def verify() -> bool:
     return ok
 
 
+def maybe_onboard():
+    """Run the onboarding weight scan + migrate after a successful install.
+
+    Folded in here because some cloud shells (RunComfy's web terminal)
+    whitelist commands and block `python`, so users may never get to run
+    onboard.py by hand — but ComfyUI-Manager DOES execute install.py with
+    ComfyUI's python on a git-URL install. Symlink-only, safe to repeat.
+    Opt out with PIXAL3D_SKIP_ONBOARD=1.
+    """
+    if os.environ.get("PIXAL3D_SKIP_ONBOARD") == "1":
+        return
+    models_dir = PACK_DIR.parents[1] / "models"
+    if not models_dir.is_dir():
+        return
+    try:
+        sys.path.insert(0, str(PACK_DIR))
+        import onboard
+        log("running onboarding scan (--migrate)...")
+        onboard.run(models_dir.resolve(), migrate=True)
+    except Exception as e:
+        log(f"onboarding scan skipped ({type(e).__name__}: {e})")
+
+
 def write_manifest(abi: dict):
     MANIFEST.write_text(json.dumps({
         "python": abi["python"],
@@ -338,6 +361,7 @@ def main():
         ok = verify()
 
     if ok:
+        maybe_onboard()
         log("vendor install COMPLETE. Restart ComfyUI.")
     else:
         die("vendor install finished WITH ERRORS — see MISSING lines above.")
