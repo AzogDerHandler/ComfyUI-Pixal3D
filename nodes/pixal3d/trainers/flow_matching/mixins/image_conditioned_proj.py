@@ -397,8 +397,14 @@ class DinoV3ProjFeatureExtractor(nn.Module):
         else:
             self.naf_target_size = tuple(naf_target_size)
         
-        # Load DINOv3 model (frozen, no trainable params in this module)
-        self.model = DINOv3ViTModel.from_pretrained(model_name)
+        # Load DINOv3 model (frozen, no trainable params in this module).
+        # Fork: config-only construction. The real backbone weights live in the
+        # shared vendored DINOv3ViT (ComfyUI/models/dinov3/model.safetensors)
+        # and _build_cond swaps this placeholder out right after __init__ --
+        # from_pretrained here downloaded 1.2 GB of transformers-format weights
+        # into the (often non-persisted) HF cache purely to read the config.
+        from transformers import AutoConfig
+        self.model = DINOv3ViTModel(AutoConfig.from_pretrained(model_name))
         self.model.eval()
         self.model.requires_grad_(False)
         

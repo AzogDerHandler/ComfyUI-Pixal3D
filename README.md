@@ -32,8 +32,17 @@ Upstream model: [code](https://github.com/TencentARC/Pixal3D) ·
 cd ComfyUI/custom_nodes
 git clone https://github.com/AzogDerSchaender/ComfyUI-Pixal3D.git
 cd ComfyUI-Pixal3D
+python onboard.py        # preflight: env report + weight inventory
+python onboard.py --migrate   # reuse weights left by OTHER Pixal3D packs
 python install.py        # use ComfyUI's own python (its venv python)
 ```
+
+`onboard.py` scans `ComfyUI/models/` and the HF/torch caches for Pixal3D,
+DINOv3, MoGe-2, and NAF weights downloaded by any previous integration
+(Saganaki22, RH-RunningHub, dreamrec/HF snapshots) and symlinks them into
+this pack's layout — so you don't re-download ~26 GB you already have. It
+also flags partial/corrupt downloads (delete those; they'd otherwise be
+skipped by the downloader and crash at load).
 
 `install.py` detects the host Python/torch/CUDA ABI, resolves matching
 prebuilt wheels from the [cuda-wheels index](https://github.com/PozzettiAndrea/cuda-wheels),
