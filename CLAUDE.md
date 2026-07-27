@@ -1,3 +1,11 @@
+> [!NOTE]
+> **ENVLESS FORK (2026-07):** this document describes the ORIGINAL comfy-env
+> based design and is kept as historical context. The fork replaced comfy-env
+> entirely: all deps vendor into `vendor/` via `install.py` (see README.md),
+> `vram_mode=full_gpu` un-hardcodes `low_vram`, camera estimation is in-pack
+> (`Pixal3DEstimateCamera`, vendored MoGe-2), and the license situation changed
+> upstream to MIT (code + weights) on 2026-06-13.
+
 # ComfyUI-Pixal3D — Wrapping Plan
 
 ## Context

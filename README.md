@@ -1,74 +1,87 @@
-> [!WARNING]
-> Warning, uses experimental package `comfy-env` to attempt a one click isolated install. Will download and use pixi package manager.
+# ComfyUI-Pixal3D (envless fork)
 
-# ComfyUI-Pixal3D
+ComfyUI nodes for **Pixal3D** (SIGGRAPH 2026, TencentARC) — pixel-aligned image-to-3D
+generation. Single image in, textured PBR GLB out.
 
-## Installation
+Fork of [PozzettiAndrea/ComfyUI-Pixal3D](https://github.com/PozzettiAndrea/ComfyUI-Pixal3D),
+rebuilt for **cloud GPU providers (RunComfy, RunPod, ...)** and **max quality on
+big-VRAM machines**:
 
-Three options, in order of speed → reliability:
+- **No comfy-env / pixi.** Every dependency — including the compiled CUDA stack
+  (flash-attn, natten, flex_gemm, cumesh, o_voxel, drtk) — installs into
+  `vendor/` **inside this folder** via prebuilt wheels. Since `custom_nodes`
+  lives on the persisted volume, dependencies survive pod restarts. No source
+  builds, no CUDA toolkit, no host-env writes.
+- **`vram_mode=full_gpu`**: all 13 models stay resident on the GPU. No
+  per-stage CPU↔GPU swapping (the upstream `low_vram` behavior that this pack
+  previously hard-coded). `auto` picks full_gpu on cards with ≥ 30 GB VRAM.
+- **Self-contained camera estimation**: new `Pixal3DEstimateCamera` node runs
+  the vendored MoGe-2 — the companion ComfyUI-MoGe2 pack is no longer needed.
+- **Max-quality defaults**: `1536_cascade` default, `max_num_tokens` up to
+  262144, 8K texture bake on the split PBR chain, up to 5M faces.
+- FlexGEMM's triton autotune cache is persisted next to the pack (kills the
+  "first run after every restart is slow" tax on ephemeral pods).
 
-1. **ComfyUI Manager (recommended)** — search for `Pixal3D` in the Manager and click Install from the highest version displayed. If that doesn't work, try nightly.
-2. **Manager via Git URL** — in ComfyUI Manager: "Install via Git URL" with `https://github.com/PozzettiAndrea/ComfyUI-Pixal3D.git`.
-3. **Manual (most reliable)**:
-   ```bash
-   cd ComfyUI/custom_nodes
-   git clone https://github.com/PozzettiAndrea/ComfyUI-Pixal3D.git
-   cd ComfyUI-Pixal3D
-   pip install -r requirements.txt --upgrade
-   python install.py
-   ```
+Upstream model: [code](https://github.com/TencentARC/Pixal3D) ·
+[weights](https://huggingface.co/TencentARC/Pixal3D) ·
+[paper](https://arxiv.org/abs/2605.10922). Code and weights are **MIT**.
 
-> **Please report any problems** you hit during installation or use of my nodes — open a [Discussion](https://github.com/PozzettiAndrea/ComfyUI-Pixal3D/discussions) or [Issue](https://github.com/PozzettiAndrea/ComfyUI-Pixal3D/issues). Very grateful for your help! 🙏
+## Install (cloud pod / Linux)
 
----
+```bash
+cd ComfyUI/custom_nodes
+git clone https://github.com/AzogDerSchaender/ComfyUI-Pixal3D.git
+cd ComfyUI-Pixal3D
+python install.py        # use ComfyUI's own python (its venv python)
+```
 
+`install.py` detects the host Python/torch/CUDA ABI, resolves matching
+prebuilt wheels from the [cuda-wheels index](https://github.com/PozzettiAndrea/cuda-wheels),
+installs everything into `vendor/`, and verifies every import. Then restart
+ComfyUI. Sanity check any time with:
 
-<div align="center">
-<a href="https://pozzettiandrea.github.io/ComfyUI-Pixal3D/">
-<img src="https://pozzettiandrea.github.io/ComfyUI-Pixal3D/gallery-preview.png" alt="Workflow Test Gallery" width="800">
-</a>
-<br>
-<b><a href="https://pozzettiandrea.github.io/ComfyUI-Pixal3D/">View Live Test Gallery →</a></b>
-</div>
+```bash
+python install.py --check
+```
 
-ComfyUI nodes for **Pixal3D** (SIGGRAPH 2026, TencentARC) — pixel-aligned image-to-3D generation. Single image in, textured GLB out.
+Model weights (~23 GB Pixal3D + 1.2 GB DINOv3 + 1.3 GB MoGe-2 + 100 MB NAF)
+auto-download to `ComfyUI/models/` on first run — also on the persisted volume.
 
-- Project page: <https://ldyang694.github.io/projects/pixal3d/>
-- Paper: <https://arxiv.org/abs/2605.10922>
-- Upstream code: <https://github.com/TencentARC/Pixal3D>
-- Model weights: <https://huggingface.co/TencentARC/Pixal3D>
+Useful env vars: `PIXAL3D_WHEEL_INDEX` (alternate wheel index),
+`PIXAL3D_VENDOR_APPEND=1` (host packages win over vendor pins),
+`PIXAL3D_VENDOR_DISABLE=1` (ignore vendor entirely),
+`PIXAL3D_SKIP_INSTALL=1` (make install.py a no-op).
 
-## Nodes (MVP)
+If you switch to a machine with a different Python/torch/CUDA, re-run
+`python install.py` once (a startup log warning will tell you).
+
+## Nodes
 
 | Node | Purpose |
 |------|---------|
-| `Pixal3DLoadPipeline` | Loads the cascade pipeline + four DinoV3 cond models. Auto-downloads Pixal3D weights. |
-| `Pixal3DLoadMoGe` | Loads MoGe-2 for camera-intrinsic estimation. |
-| `Pixal3DPreprocessImage` | Background removal + alpha bbox crop + 1024-max resize. |
-| `Pixal3DEstimateCamera` | Runs MoGe-2 to estimate camera_angle_x and distance from the input image. |
-| `Pixal3DGenerate` | Runs the four-stage cascade (SS → shape LR 512 → shape HR 1024 → texture 1024). |
-| `Pixal3DExtractGLB` | Extracts a textured GLB via `o_voxel.postprocess.to_glb`. Saves to `output/`. |
+| `Pixal3DLoadPipeline` | Thin config: `pipeline_type` (1024/1536 cascade), `attn_backend`, `vram_mode` (auto / full_gpu / low_vram). |
+| `Pixal3DPreprocessImage` | Pure-PIL alpha-bbox crop + resize (bring your own MASK for bg removal). |
+| `Pixal3DEstimateCamera` | MoGe-2 FOV estimation → camera dict. Feed the ORIGINAL (pre-crop) image. |
+| `Pixal3DCameraFromFOV` | Manual FOV → camera dict (bypass MoGe for synthetic/known cameras). |
+| `Pixal3DGenerateGLB` | Fused cascade → vertex-color GLB (fast convenience path, no UV textures). |
+| `Pixal3DGenerateMesh` → `Pixal3DProcessMesh` → `Pixal3DRasterizePBR` → `Pixal3DExportGLB` | **The quality path**: raw mesh + PBR voxel grid → cleanup/UV unwrap → UV-space PBR bake (up to 8192px) → GLB. |
+
+## Max-quality recipe (big cloud GPU)
+
+- `Pixal3DLoadPipeline`: `1536_cascade`, `vram_mode=full_gpu`, `attn_backend=auto`
+- `Pixal3DGenerateMesh`: `max_num_tokens` 98304–131072, steps 16/16/16
+- `Pixal3DProcessMesh`: `target_face_count` to taste (up to 5M)
+- `Pixal3DRasterizePBR`: `texture_size` 4096–8192, wire `original_mesh` from
+  GenerateMesh for BVH-snapped (sharper) textures
+- Use `workflows/pixal3d_basic.json` as the starting graph.
 
 ## Hardware
 
-- NVIDIA GPU with **SM ≥ 8.0** (Ampere/Ada/Hopper/Blackwell). flash-attn-3 has no fallback for older GPUs.
-- ≥24 GB VRAM recommended for `1024_cascade` with `low_vram=True`. More for `1536_cascade`.
-- ~30 GB free disk for model weights.
-
-## Community
-
-Questions or feature requests? Open a [Discussion](https://github.com/PozzettiAndrea/ComfyUI-Pixal3D/discussions) on GitHub.
-
-Join the [Comfy3D Discord](https://discord.gg/bcdQCUjnHE) for help, updates, and chat about 3D workflows in ComfyUI.
+- NVIDIA GPU, **SM ≥ 8.0** (Ampere/Ada/Hopper/Blackwell).
+- `full_gpu` + 1536_cascade wants ~40 GB+ VRAM; `low_vram` + 1024_cascade fits 24 GB.
+- ~30 GB disk for weights, ~5 GB for vendor/.
 
 ## Credits
 
-Built on the work of the Pixal3D authors (Li, Zhao, Chen, Hu, Guo, Zhang, Shan, Hu — Tsinghua / Tencent ARC / Victoria University of Wellington), Microsoft TRELLIS.2, Direct3D-S2, MoGe (Microsoft), and DINOv3 (Meta).
-
-Built with DINOv3.
-
-Wrapper authored by Andrea Pozzetti.
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit issues and pull requests.
+Pixal3D authors (Tsinghua / Tencent ARC / VUW); Microsoft TRELLIS.2 & MoGe;
+Meta DINOv3; original ComfyUI wrapper and cuda-wheels index by Andrea Pozzetti.

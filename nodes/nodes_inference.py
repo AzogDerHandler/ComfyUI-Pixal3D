@@ -42,6 +42,62 @@ class Pixal3DPreprocessImage(io.ComfyNode):
             return io.NodeOutput(out)
 
 
+class Pixal3DEstimateCamera(io.ComfyNode):
+    """Self-contained MoGe-2 camera estimation (no companion pack needed).
+
+    Runs the vendored MoGe-2 ViT-L on the ORIGINAL input image (feed the image
+    BEFORE Pixal3DPreprocessImage's crop, matching upstream inference.py),
+    derives horizontal FOV from the estimated intrinsics, and packs the
+    PIXAL3D_CAMERA dict. MoGe weights (~1.3 GB) download to
+    ComfyUI/models/moge/ on first use and offload to CPU after each call."""
+
+    @classmethod
+    def define_schema(cls):
+        return io.Schema(
+            node_id="Pixal3DEstimateCamera",
+            display_name="Pixal3D Estimate Camera (MoGe-2)",
+            category="Pixal3D",
+            description=(
+                "Estimates horizontal FOV with MoGe-2 and emits the "
+                "PIXAL3D_CAMERA dict. Wire the ORIGINAL image (pre-crop) in. "
+                "For manual control use Pixal3DCameraFromFOV instead."
+            ),
+            inputs=[
+                io.Image.Input("image", tooltip="Original input image (before preprocess/crop)."),
+                io.Float.Input("mesh_scale", default=1.0, min=0.1, max=10.0, step=0.05, optional=True),
+                io.Int.Input("extend_pixel", default=0, min=0, max=128, optional=True),
+                io.Int.Input("image_resolution", default=512, min=256, max=2048, step=64, optional=True),
+            ],
+            outputs=[
+                io.Custom("PIXAL3D_CAMERA").Output(display_name="camera"),
+                io.Float.Output(display_name="fov_x_deg"),
+            ],
+        )
+
+    @classmethod
+    def execute(
+        cls,
+        image,
+        mesh_scale: float = 1.0,
+        extend_pixel: int = 0,
+        image_resolution: int = 512,
+    ):
+        from .stages import estimate_camera, _phase
+        with _phase("Pixal3DEstimateCamera.execute"):
+            cam, fov_x_deg = estimate_camera(
+                image,
+                mesh_scale=mesh_scale,
+                extend_pixel=extend_pixel,
+                image_resolution=image_resolution,
+            )
+            log.info(
+                f"[Pixal3DEstimateCamera] fov_x_deg={fov_x_deg:.2f}, "
+                f"camera_angle_x={cam['camera_angle_x']:.4f}, "
+                f"distance={cam['distance']:.4f}"
+            )
+            return io.NodeOutput(cam, fov_x_deg)
+
+
 class Pixal3DCameraFromFOV(io.ComfyNode):
     """Pack an externally-measured horizontal FOV into a PIXAL3D_CAMERA dict.
 
@@ -122,7 +178,16 @@ class Pixal3DGenerateGLB(io.ComfyNode):
                 io.Image.Input("image", tooltip="Preprocessed image."),
                 io.Custom("PIXAL3D_CAMERA").Input("camera", tooltip="From Pixal3DCameraFromFOV."),
                 io.Int.Input("seed", default=42, min=0, max=2**31 - 1),
-                io.Int.Input("max_num_tokens", default=49152, min=1024, max=131072, step=1024, optional=True),
+                io.Int.Input(
+                    "max_num_tokens", default=49152, min=1024, max=262144, step=1024, optional=True,
+                    tooltip=(
+                        "Sparse token budget for the HR stages -- the main geometry-"
+                        "detail lever. The cascade auto-shrinks resolution until the "
+                        "budget fits (check logs). Raising it costs VRAM and time; "
+                        "on big cloud GPUs 98304-131072 is a reasonable max-quality "
+                        "range, 49152 is the upstream default."
+                    ),
+                ),
                 # SS knobs
                 io.Int.Input("ss_steps", default=12, min=1, max=64, optional=True),
                 io.Float.Input("ss_guidance", default=7.5, min=0.0, max=15.0, step=0.1, optional=True),
@@ -210,6 +275,7 @@ class Pixal3DGenerateGLB(io.ComfyNode):
         with _phase("Pixal3DGenerateGLB.execute"):
             pipeline_type = pipeline.get("pipeline_type", "1024_cascade")
             attn_backend = pipeline.get("attn_backend", "auto")
+            vram_mode = pipeline.get("vram_mode", "auto")
 
             out = generate_glb(
                 image=image,
@@ -217,6 +283,7 @@ class Pixal3DGenerateGLB(io.ComfyNode):
                 seed=seed,
                 pipeline_type=pipeline_type,
                 attn_backend=attn_backend,
+                vram_mode=vram_mode,
                 max_num_tokens=max_num_tokens,
                 ss_steps=ss_steps,
                 ss_guidance=ss_guidance,
@@ -242,12 +309,14 @@ class Pixal3DGenerateGLB(io.ComfyNode):
 
 NODE_CLASS_MAPPINGS = {
     "Pixal3DPreprocessImage": Pixal3DPreprocessImage,
+    "Pixal3DEstimateCamera": Pixal3DEstimateCamera,
     "Pixal3DCameraFromFOV": Pixal3DCameraFromFOV,
     "Pixal3DGenerateGLB": Pixal3DGenerateGLB,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "Pixal3DPreprocessImage": "Pixal3D Preprocess Image",
+    "Pixal3DEstimateCamera": "Pixal3D Estimate Camera (MoGe-2)",
     "Pixal3DCameraFromFOV": "Pixal3D Camera From FOV",
     "Pixal3DGenerateGLB": "Pixal3D Generate GLB",
 }

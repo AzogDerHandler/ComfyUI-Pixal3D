@@ -40,7 +40,15 @@ class Pixal3DGenerateMesh(io.ComfyNode):
                 io.Image.Input("image", tooltip="Preprocessed image."),
                 io.Custom("PIXAL3D_CAMERA").Input("camera", tooltip="From Pixal3DCameraFromFOV."),
                 io.Int.Input("seed", default=42, min=0, max=2**31 - 1),
-                io.Int.Input("max_num_tokens", default=49152, min=1024, max=131072, step=1024, optional=True),
+                io.Int.Input(
+                    "max_num_tokens", default=49152, min=1024, max=262144, step=1024, optional=True,
+                    tooltip=(
+                        "Sparse token budget for the HR stages -- the main geometry-"
+                        "detail lever. The cascade auto-shrinks resolution until the "
+                        "budget fits (check logs). 49152 = upstream default; "
+                        "98304-131072 is a reasonable max-quality range on big GPUs."
+                    ),
+                ),
                 io.Int.Input("ss_steps", default=12, min=1, max=64, optional=True),
                 io.Float.Input("ss_guidance", default=7.5, min=0.0, max=15.0, step=0.1, optional=True),
                 io.Float.Input("ss_rescale", default=0.7, min=0.0, max=1.0, step=0.05, optional=True),
@@ -80,6 +88,7 @@ class Pixal3DGenerateMesh(io.ComfyNode):
                 seed=seed,
                 pipeline_type=pipeline.get("pipeline_type", "1024_cascade"),
                 attn_backend=pipeline.get("attn_backend", "auto"),
+                vram_mode=pipeline.get("vram_mode", "auto"),
                 max_num_tokens=max_num_tokens,
                 ss_steps=ss_steps, ss_guidance=ss_guidance, ss_rescale=ss_rescale, ss_rescale_t=ss_rescale_t,
                 shape_steps=shape_steps, shape_guidance=shape_guidance, shape_rescale=shape_rescale, shape_rescale_t=shape_rescale_t,

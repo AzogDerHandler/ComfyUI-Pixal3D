@@ -16,3 +16,6 @@ autotune_cache.json
 
 # (no /models/ ignore — ComfyUI stores model weights at ComfyUI/models/, not inside this pack.
 # Recursive `models/` would also hide the vendored nodes/pixal3d/models/ package!)
+
+# vendored dependencies — machine-specific ABI, built on the pod by install.py
+/vendor/

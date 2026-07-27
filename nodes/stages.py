@@ -113,6 +113,7 @@ def _comfy_tqdm():
 
 PIXAL3D_REPO = "TencentARC/Pixal3D"
 DINOV3_REPO = "camenduru/dinov3-vitl16-pretrain-lvd1689m"
+MOGE_REPO = "Ruicheng/moge-2-vitl"
 # NAF source is vendored under nodes/naf_pkg/ (see VENDORED.md). The .pth
 # checkpoint stays a runtime download -- it's ~100 MB and doesn't belong in
 # the repo. urllib is portable across Linux/Windows/Mac so no subprocess.
@@ -186,6 +187,10 @@ def _local_pixal3d_dir() -> Path:
 # ============================================================================
 
 _pipeline = None
+# Resolved VRAM mode currently applied to _pipeline ("full_gpu"/"low_vram").
+_pipeline_vram_mode = None
+# MoGe-2 camera-estimation model (lazy, lives on CPU between calls).
+_moge = None
 # id(model_instance) -> ModelPatcher. Used by _wrap_with_comfy_patcher to route
 # pixal3d's per-stage .to(device) / .cpu() calls through ComfyUI's memory
 # manager (load_models_gpu auto-offloads competing models in the workflow).
@@ -494,16 +499,78 @@ def _wrap_pipeline_models_with_patchers(pipeline):
     # MASK, or a community rembg node feeding Pixal3DPreprocessImage's mask input).
 
 
-def init_pipeline(attn_backend: str = "auto") -> "object":
+_COND_ATTRS = (
+    "image_cond_model_ss",
+    "image_cond_model_shape_512",
+    "image_cond_model_shape_1024",
+    "image_cond_model_tex_1024",
+)
+
+
+def _resolve_vram_mode(vram_mode: str) -> str:
+    """'auto' -> full_gpu on cards with headroom for the resident cascade
+    (~14 GB weights + activations; 1536_cascade peaks well above 24 GB),
+    low_vram otherwise."""
+    if vram_mode != "auto":
+        return vram_mode
+    try:
+        total_gb = torch.cuda.get_device_properties(0).total_memory / (1 << 30)
+    except Exception:
+        return "low_vram"
+    return "full_gpu" if total_gb >= 30 else "low_vram"
+
+
+def _apply_vram_mode(pipeline, resolved: str):
+    """Switch between per-stage swap (low_vram) and full-GPU residency.
+
+    full_gpu: every cascade + cond model moves to GPU once (each `.to()` is
+    patched to route through load_models_gpu) and all the per-stage `.cpu()`
+    offloads inside pipeline.run() are skipped — they're guarded by
+    `if self.low_vram`. Weights stay resident between runs; no PCIe shuffling.
+    """
+    global _pipeline_vram_mode
+    if _pipeline_vram_mode == resolved:
+        return
+    device = _mm().get_torch_device()
+    with _phase(f"apply vram_mode={resolved}"):
+        if resolved == "full_gpu":
+            pipeline.low_vram = False
+            # Base Pipeline.to() iterates self.models -> each patched .to()
+            # informs ComfyUI's memory manager, then physically moves.
+            pipeline.to(device)
+            for attr in _COND_ATTRS:
+                m = getattr(pipeline, attr, None)
+                if m is not None:
+                    m.to(device)
+        else:
+            pipeline.low_vram = True
+            if _pipeline_vram_mode == "full_gpu":
+                for m in pipeline.models.values():
+                    m.cpu()
+                for attr in _COND_ATTRS:
+                    m = getattr(pipeline, attr, None)
+                    if m is not None:
+                        m.cpu()
+            # With low_vram=True this only records the target device; the
+            # per-stage swap moves models as each stage needs them.
+            pipeline.to(device)
+    _pipeline_vram_mode = resolved
+
+
+def init_pipeline(attn_backend: str = "auto", vram_mode: str = "auto") -> "object":
     """Load + cache Pixal3D pipeline + 4 DinoV3 cond models. Idempotent.
 
-    The cascade always runs in per-stage swap mode (pixal3d's `low_vram=True`).
-    This is the only mode that fits a 24 GB GPU; off-stage models are held on
-    CPU which is the ComfyUI-native expectation. We don't expose a knob.
+    vram_mode:
+      full_gpu -- all 13 models stay resident on the GPU (fastest; needs a
+                  big card, made for cloud GPUs where VRAM isn't the limit).
+      low_vram -- pixal3d's per-stage swap; off-stage models on CPU (fits 24 GB).
+      auto     -- full_gpu when total VRAM >= 30 GB, else low_vram.
     """
     global _pipeline
+    resolved_mode = _resolve_vram_mode(vram_mode)
     if _pipeline is not None:
         _set_attention_backends(attn_backend)
+        _apply_vram_mode(_pipeline, resolved_mode)
         return _pipeline
 
     _check_gpu_or_raise()
@@ -524,6 +591,11 @@ def init_pipeline(attn_backend: str = "auto") -> "object":
         with _phase("from_pretrained: 8 cascade safetensors -> CPU"):
             pipeline = Pixal3DImageTo3DPipeline.from_pretrained(str(local_dir))
 
+        # We never call pipeline.preprocess_image (rembg is stubbed and our
+        # Pixal3DPreprocessImage node is pure PIL). Nulling the wrapper keeps
+        # full-GPU pipeline.to() from tripping over the stub's model=None.
+        pipeline.rembg_model = None
+
         for key in ("ss", "shape_512", "shape_1024", "tex_1024"):
             with _phase(f"build DinoV3 cond '{key}'"):
                 setattr(pipeline, f"image_cond_model_{key}", _build_cond(key))
@@ -532,6 +604,8 @@ def init_pipeline(attn_backend: str = "auto") -> "object":
         # pixal3d's pipeline.run() already calls `model.to(device)` / `model.cpu()`
         # between stages; we wrap each model so those calls go through ComfyUI's
         # memory manager (auto-offloads competing models, plays nice across nodes).
+        # Start in low_vram (models are on CPU right now); _apply_vram_mode below
+        # promotes to full residency when requested.
         pipeline.low_vram = True
         # CRITICAL: tell the pipeline its target device. Pixal3DImageTo3DPipeline.to()
         # with low_vram=True only sets `self._device` (no model movement -- good,
@@ -560,6 +634,8 @@ def init_pipeline(attn_backend: str = "auto") -> "object":
 
         with _phase("ModelPatcher wrap: cascade + cond + shared backbones"):
             _wrap_pipeline_models_with_patchers(pipeline)
+
+        _apply_vram_mode(pipeline, resolved_mode)
 
     _pipeline = pipeline
     return pipeline
@@ -766,6 +842,92 @@ def pack_camera_from_fov(
 
 
 # ============================================================================
+# MoGe-2 camera estimation (vendored; no companion node pack needed).
+# Mirrors upstream inference.py:get_camera_params_wild_moge -- run MoGe on the
+# ORIGINAL input image (pre-crop), take normalized fx from the intrinsics.
+# The fov math is width-independent: fx = fx_norm * W, angle = 2*atan(W/(2*fx))
+# = 2*atan(1/(2*fx_norm)).
+# ============================================================================
+
+
+def _download_moge() -> Path:
+    from huggingface_hub import hf_hub_download
+
+    local_dir = Path(folder_paths.models_dir) / "moge" / "moge-2-vitl"
+    target = local_dir / "model.pt"
+    if not target.exists():
+        with _phase("download MoGe-2 ViT-L (~1.3 GB)"):
+            hf_hub_download(
+                repo_id=MOGE_REPO,
+                filename="model.pt",
+                local_dir=str(local_dir),
+                tqdm_class=_comfy_tqdm(),
+            )
+    return target
+
+
+def _init_moge():
+    global _moge
+    if _moge is not None:
+        return _moge
+    with _phase("init MoGe-2 (camera estimation)"):
+        from moge.model.v2 import MoGeModel
+
+        path = _download_moge()
+        try:
+            model = MoGeModel.from_pretrained(str(path))
+        except Exception:
+            # Fall back to letting MoGe resolve the repo id itself (HF cache).
+            log.warning(f"[moge] local load of {path} failed; falling back to hub")
+            model = MoGeModel.from_pretrained(MOGE_REPO)
+        model.eval()
+        _moge = model
+    return _moge
+
+
+def estimate_camera(
+    image: torch.Tensor,
+    mesh_scale: float = 1.0,
+    extend_pixel: int = 0,
+    image_resolution: int = 512,
+) -> Tuple[dict, float]:
+    """Estimate horizontal FOV with MoGe-2 and pack the PIXAL3D_CAMERA dict.
+
+    Feed the ORIGINAL image (before Pixal3DPreprocessImage's crop), matching
+    upstream. Returns (camera_dict, fov_x_deg). MoGe is offloaded to CPU after
+    every call -- it's 1.3 GB and only runs when the input image changes, so
+    keeping the cascade's VRAM headroom matters more than reload speed.
+    """
+    device = _mm().get_torch_device()
+    model = _init_moge()
+
+    img = image
+    if img.ndim == 4:
+        img = img[0]
+    img = img.detach().cpu().float().clamp(0, 1).permute(2, 0, 1).to(device)
+
+    try:
+        model.to(device)
+        with _phase("MoGe-2 infer (fov)"), torch.no_grad():
+            output = model.infer(img)
+        intrinsics = output["intrinsics"].squeeze().detach().cpu().numpy()
+    finally:
+        model.cpu()
+        _mm().soft_empty_cache()
+
+    fx_normalized = float(intrinsics[0][0])
+    camera_angle_x = 2.0 * math.atan(1.0 / (2.0 * fx_normalized))
+    fov_x_deg = math.degrees(camera_angle_x)
+    cam = pack_camera_from_fov(
+        fov_x_deg=fov_x_deg,
+        mesh_scale=mesh_scale,
+        extend_pixel=extend_pixel,
+        image_resolution=image_resolution,
+    )
+    return cam, fov_x_deg
+
+
+# ============================================================================
 # Cascade + GLB export, split into composable helpers.
 #
 # The cascade returns an internal-coords (Z-up, [-0.5, 0.5]^3) DC mesh + a
@@ -793,13 +955,14 @@ def _run_cascade(
     seed: int,
     pipeline_type: str,
     attn_backend: str,
+    vram_mode: str,
     max_num_tokens: int,
     ss_steps: int, ss_guidance: float, ss_rescale: float, ss_rescale_t: float,
     shape_steps: int, shape_guidance: float, shape_rescale: float, shape_rescale_t: float,
     tex_steps: int, tex_guidance: float, tex_rescale: float, tex_rescale_t: float,
 ):
     """Run the 4-stage cascade. Returns (pipeline, MeshWithVoxel, resolution)."""
-    pipeline = init_pipeline(attn_backend=attn_backend)
+    pipeline = init_pipeline(attn_backend=attn_backend, vram_mode=vram_mode)
     pil = comfy_image_to_pil(image)
     torch.manual_seed(seed)
     log.info(f"[pixal3d] Running cascade ({pipeline_type}, seed={seed})")
@@ -1558,6 +1721,7 @@ def generate_mesh_and_voxelgrid(
     seed: int = 42,
     pipeline_type: str = "1024_cascade",
     attn_backend: str = "auto",
+    vram_mode: str = "auto",
     max_num_tokens: int = 49152,
     ss_steps: int = 12, ss_guidance: float = 7.5, ss_rescale: float = 0.7, ss_rescale_t: float = 5.0,
     shape_steps: int = 12, shape_guidance: float = 7.5, shape_rescale: float = 0.5, shape_rescale_t: float = 3.0,
@@ -1566,7 +1730,7 @@ def generate_mesh_and_voxelgrid(
     """Run the cascade and split the result into IPC-safe (TRIMESH, PIXAL3D_VOXELGRID).
     The trimesh is the raw DC mesh in pixal3d internal coords ([-0.5, 0.5]^3, Z-up)."""
     pipeline, mw, _res = _run_cascade(
-        image, camera_params, seed, pipeline_type, attn_backend, max_num_tokens,
+        image, camera_params, seed, pipeline_type, attn_backend, vram_mode, max_num_tokens,
         ss_steps, ss_guidance, ss_rescale, ss_rescale_t,
         shape_steps, shape_guidance, shape_rescale, shape_rescale_t,
         tex_steps, tex_guidance, tex_rescale, tex_rescale_t,
@@ -1590,6 +1754,7 @@ def generate_glb(
     seed: int = 42,
     pipeline_type: str = "1024_cascade",
     attn_backend: str = "auto",
+    vram_mode: str = "auto",
     max_num_tokens: int = 49152,
     ss_steps: int = 12, ss_guidance: float = 7.5, ss_rescale: float = 0.7, ss_rescale_t: float = 5.0,
     shape_steps: int = 12, shape_guidance: float = 7.5, shape_rescale: float = 0.5, shape_rescale_t: float = 3.0,
@@ -1607,7 +1772,7 @@ def generate_glb(
     path: no UV unwrap, no texture map, fast. For UV-baked output use the split node
     chain (GenerateMesh -> ProcessMesh -> RasterizePBR -> ExportGLB)."""
     tri, voxelgrid = generate_mesh_and_voxelgrid(
-        image, camera_params, seed, pipeline_type, attn_backend, max_num_tokens,
+        image, camera_params, seed, pipeline_type, attn_backend, vram_mode, max_num_tokens,
         ss_steps, ss_guidance, ss_rescale, ss_rescale_t,
         shape_steps, shape_guidance, shape_rescale, shape_rescale_t,
         tex_steps, tex_guidance, tex_rescale, tex_rescale_t,

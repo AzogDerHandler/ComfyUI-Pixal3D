@@ -31,8 +31,12 @@ class Pixal3DLoadPipeline(io.ComfyNode):
                 io.Combo.Input(
                     "pipeline_type",
                     options=["1024_cascade", "1536_cascade"],
-                    default="1024_cascade",
-                    tooltip="Cascade target resolution. 1536_cascade needs significantly more VRAM.",
+                    default="1536_cascade",
+                    tooltip=(
+                        "Cascade target resolution. 1536_cascade is the max-quality "
+                        "path (default here; needs ~24 GB+ VRAM). Drop to "
+                        "1024_cascade on smaller cards."
+                    ),
                 ),
                 io.Combo.Input(
                     "attn_backend",
@@ -46,6 +50,18 @@ class Pixal3DLoadPipeline(io.ComfyNode):
                     ),
                     optional=True,
                 ),
+                io.Combo.Input(
+                    "vram_mode",
+                    options=["auto", "full_gpu", "low_vram"],
+                    default="auto",
+                    tooltip=(
+                        "full_gpu: keep all 13 models resident on the GPU -- no "
+                        "per-stage CPU<->GPU swapping, fastest runs (needs a big "
+                        "card; made for cloud GPUs). low_vram: pixal3d's per-stage "
+                        "swap, fits 24 GB. auto: full_gpu when total VRAM >= 30 GB."
+                    ),
+                    optional=True,
+                ),
             ],
             outputs=[
                 io.Custom("PIXAL3D_PIPELINE").Output(display_name="pipeline"),
@@ -55,8 +71,9 @@ class Pixal3DLoadPipeline(io.ComfyNode):
     @classmethod
     def execute(
         cls,
-        pipeline_type: str = "1024_cascade",
+        pipeline_type: str = "1536_cascade",
         attn_backend: str = "auto",
+        vram_mode: str = "auto",
     ):
         from .stages import _phase
         with _phase("Pixal3DLoadPipeline.execute"):
@@ -66,6 +83,7 @@ class Pixal3DLoadPipeline(io.ComfyNode):
             return io.NodeOutput({
                 "pipeline_type": pipeline_type,
                 "attn_backend": attn_backend,
+                "vram_mode": vram_mode,
             })
 
 

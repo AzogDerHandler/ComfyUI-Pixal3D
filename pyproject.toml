@@ -1,12 +1,11 @@
 [project]
-name = "ComfyUI-Pixal3D-Pozzetti"
-description = "Warning, uses experimental package `comfy-env` to attempt a one click isolated install. Will download and use pixi package manager. ComfyUI nodes for Pixal3D (SIGGRAPH 2026, TencentARC) — pixel-aligned image-to-3D generation. Single image in, textured GLB out. Models autodownload from HuggingFace."
-version = "0.1.3"
+name = "ComfyUI-Pixal3D"
+description = "Envless fork of ComfyUI-Pixal3D-Pozzetti: Pixal3D (SIGGRAPH 2026, TencentARC) pixel-aligned image-to-3D. Single image in, textured PBR GLB out. All dependencies vendor into the node folder (cloud/RunComfy friendly); full-GPU residency mode for max speed on big-VRAM machines."
+version = "0.2.0"
 license = {file = "LICENSE"}
 
 [project.urls]
-Repository = "https://github.com/PozzettiAndrea/ComfyUI-Pixal3D"
+Repository = "https://github.com/AzogDerSchaender/ComfyUI-Pixal3D"
 
 [tool.comfy]
-PublisherId = "pznodes"
-DisplayName = "Pixal3D-env"
+DisplayName = "Pixal3D (envless)"
