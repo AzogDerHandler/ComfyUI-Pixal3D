@@ -12,7 +12,9 @@ accelerate==1.13.0
 kornia==0.8.2
 timm==1.0.22
 safetensors>=0.7.0          # <0.7.0 fails on Pixal3D's ss_flow checkpoint
-huggingface_hub>=0.34.0
+# transformers 4.57.3 hard-fails at import outside these ranges
+# (dependency_versions_table.py) — hub 1.x crashed ComfyUI at boot:
+huggingface_hub>=0.34.0,<1.0
 hf_transfer
 hf_xet
 
@@ -35,11 +37,11 @@ tqdm
 einops
 psutil
 zstandard
-scipy>=1.11
+scipy>=1.11,<1.16           # 1.16+ needs numpy 2.x; host images may run numpy 1.26
 networkx
 
 # --- transitive closure (spelled out because of --no-deps) ---------------
-tokenizers>=0.21
+tokenizers>=0.22.0,<=0.23.0  # transformers 4.57.3's exact allowed range
 regex
 pyyaml
 filelock
