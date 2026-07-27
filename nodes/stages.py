@@ -242,12 +242,20 @@ def _download_pixal3d_weights():
         if target.exists():
             continue
         log.info(f"  downloading {rel_path}")
-        hf_hub_download(
-            repo_id=PIXAL3D_REPO,
-            filename=rel_path,
-            local_dir=str(local_dir),
-            tqdm_class=tqdm_cls,
-        )
+        try:
+            hf_hub_download(
+                repo_id=PIXAL3D_REPO,
+                filename=rel_path,
+                local_dir=str(local_dir),
+                tqdm_class=tqdm_cls,
+            )
+        except TypeError:
+            # huggingface_hub 1.x dropped/renamed tqdm_class on this call.
+            hf_hub_download(
+                repo_id=PIXAL3D_REPO,
+                filename=rel_path,
+                local_dir=str(local_dir),
+            )
     return local_dir
 
 
@@ -857,12 +865,20 @@ def _download_moge() -> Path:
     target = local_dir / "model.pt"
     if not target.exists():
         with _phase("download MoGe-2 ViT-L (~1.3 GB)"):
-            hf_hub_download(
-                repo_id=MOGE_REPO,
-                filename="model.pt",
-                local_dir=str(local_dir),
-                tqdm_class=_comfy_tqdm(),
-            )
+            try:
+                hf_hub_download(
+                    repo_id=MOGE_REPO,
+                    filename="model.pt",
+                    local_dir=str(local_dir),
+                    tqdm_class=_comfy_tqdm(),
+                )
+            except TypeError:
+                # huggingface_hub 1.x dropped/renamed tqdm_class on this call.
+                hf_hub_download(
+                    repo_id=MOGE_REPO,
+                    filename="model.pt",
+                    local_dir=str(local_dir),
+                )
     return target
 
 
