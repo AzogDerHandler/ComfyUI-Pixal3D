@@ -1,48 +1,44 @@
 # Model inventory — where every weight lives
 
-Verified against the RunComfy volume on 2026-07-27 (`ls -lR models/Pixal3D`,
-ComfyUI at `/workspace/ComfyUI`). All sizes matched the expected byte counts
-exactly — no truncated downloads.
+Verified on the RunComfy volume 2026-07-27 (`ls -lR`, ComfyUI at
+`/workspace/ComfyUI`). Every file matched the expected byte count exactly —
+no truncated downloads. The former 24 GB duplicate `models/Pixal3D/ckpts/`
+copy was deleted; exactly one copy of each weight remains.
 
-## Source of truth on the volume (pre-existing downloads)
+## Canonical layout (what this pack reads)
 
-| Model | Path under `ComfyUI/models/` | Size | Status |
-|---|---|---|---|
-| Pixal3D cascade (7 ckpts + 7 json + pipeline.json) | `Pixal3D/TencentARC_Pixal3D/` | 24.0 GB | ✅ complete, verified |
-| ~~Duplicate of the above~~ | `Pixal3D/ckpts/` + `Pixal3D/pipeline.json` | 24.0 GB | ⚠️ byte-identical duplicate — safe to delete |
-| MoGe-2 ViT-L (camera estimation) | `Pixal3D/MoGe/moge-2-vitl/model.pt` | 1.32 GB | ✅ verified |
-| DINOv3 ViT-L backbone | `Pixal3D/camenduru_dinov3-vitl16-pretrain-lvd1689m/model.safetensors` | 1.21 GB | ✅ verified |
-| NAF upsampler | `Pixal3D/torch_hub/` | empty | ❌ missing — auto-downloads ~100 MB to `models/naf/` on first run |
-| RMBG-2.0 (BiRefNet + ONNX variants) | `Pixal3D/RMBG-2.0/` | ~10.4 GB | 🗑️ NOT used by this pack (rembg is stubbed; wire a MASK instead) — deletable |
+Weights were MOVED (`mv`) out of the legacy `models/Pixal3D/` download
+locations into the paths the loaders use:
 
-## Where this pack looks for weights (post-`--migrate` layout)
+| Loader expects (under `ComfyUI/models/`) | Size | Origin |
+|---|---|---|
+| `pixal3d/pipeline.json` + `pixal3d/ckpts/` (7 safetensors + 7 json) | 24.0 GB | moved from `Pixal3D/TencentARC_Pixal3D/` (pipeline.json copied, snapshot keeps its own) |
+| `dinov3/model.safetensors` | 1.21 GB | moved from `Pixal3D/camenduru_dinov3-vitl16-pretrain-lvd1689m/` |
+| `moge/moge-2-vitl/model.pt` | 1.32 GB | moved from `Pixal3D/MoGe/moge-2-vitl/` |
+| `naf/naf_release.pth` | ~100 MB | auto-downloads from the valeoai/NAF GitHub release on first run |
 
-`install.py` / `onboard.py --migrate` symlink the sources above into:
+Expected ckpt byte sizes (for future truncation checks):
+ss_flow 5,359,822,584 · img2shape_512 5,546,764,048 · img2shape_1024
+5,546,764,048 · imgshape2tex_1024 5,546,960,656 · shape_dec 948,490,494 ·
+tex_dec 948,458,812 · ss_dec 147,591,972 · pipeline.json 4,068.
 
-| Loader expects | Symlinked from |
-|---|---|
-| `models/pixal3d/pipeline.json` + `models/pixal3d/ckpts/*` | `models/Pixal3D/TencentARC_Pixal3D/…` (or the duplicate, whichever the scan hits) |
-| `models/dinov3/model.safetensors` | `models/Pixal3D/camenduru_dinov3…/model.safetensors` |
-| `models/moge/moge-2-vitl/model.pt` | `models/Pixal3D/MoGe/moge-2-vitl/model.pt` |
-| `models/naf/naf_release.pth` | (downloaded from the valeoai/NAF GitHub release on first run) |
+## Legacy leftovers under `models/Pixal3D/` (ignored by this pack)
 
-Note: `models/pixal3d` (lowercase, this pack) and `models/Pixal3D` (uppercase,
-legacy downloads) are different directories on Linux — the lowercase one holds
-only symlinks into the uppercase one.
+| Path | Size | Note |
+|---|---|---|
+| `RMBG-2.0/` | ~10.4 GB | NOT used (rembg is stubbed — wire a MASK instead). Kept by choice; deletable any time, incl. 3.5 GB of ONNX variants nothing loads. |
+| `TencentARC_Pixal3D/` (LICENSE, NOTICE, README, pipeline.json, `_pixal3d_comfy_pipeline.json`) | ~40 KB | HF snapshot metadata + a Saganaki wrapper artifact; ckpts were moved out. |
+| `camenduru_dinov3…/` (config.json, preprocessor_config.json, READMEs) | ~25 KB | Snapshot metadata; model.safetensors was moved out. |
+| `torch_hub/`, `MoGe/` | empty | leftover dirs. |
 
-## Housekeeping
+## Notes
 
-- **Delete duplicates BEFORE running install/onboard** (or re-run onboarding
-  after deleting): the migrate step links against whichever copy it finds, and
-  deleting the linked copy afterwards leaves dangling symlinks.
-  ```bash
-  rm -r models/Pixal3D/ckpts models/Pixal3D/pipeline.json   # frees ~24 GB
-  rm -r models/Pixal3D/RMBG-2.0                             # frees ~10 GB (only if no other pack uses it)
-  ```
+- `models/pixal3d` (lowercase, this pack) vs `models/Pixal3D` (uppercase,
+  legacy) are distinct directories on Linux.
 - Directory permission bits on the volume are odd (`drw-r--r--`, no execute
-  bit) — harmless while ComfyUI runs as root (it does on RunComfy), but if a
-  future setup runs as a normal user, unreadable-directory errors trace back
-  to this.
-- The volume also stores `_pixal3d_comfy_pipeline.json` (Saganaki wrapper
-  artifact) and HF snapshot metadata (`LICENSE`, `NOTICE`, `README.md`,
-  `.gitattributes`) — all ignored by this pack.
+  bit) — harmless while ComfyUI runs as root (RunComfy does), but a non-root
+  setup would hit unreadable-directory errors here.
+- RunComfy's web terminal whitelists commands (no `python`, `find`, `ln`) —
+  which is why migration used `mv` instead of onboard.py's symlinks, and why
+  `vendor/` is built with hand-issued `pip install --target` commands or via
+  ComfyUI-Manager running install.py.
