@@ -115,7 +115,7 @@ PIXAL3D_REPO = "TencentARC/Pixal3D"
 DINOV3_REPO = "camenduru/dinov3-vitl16-pretrain-lvd1689m"
 MOGE_REPO = "Ruicheng/moge-2-vitl"
 # NAF source is vendored under nodes/naf_pkg/ (see VENDORED.md). The .pth
-# checkpoint stays a runtime download -- it's ~100 MB and doesn't belong in
+# checkpoint stays a runtime download -- it's ~2.7 MB of weights that don't belong in
 # the repo. urllib is portable across Linux/Windows/Mac so no subprocess.
 NAF_VENDOR_DIR = Path(__file__).parent / "naf_pkg"
 NAF_CHECKPOINT_URL = "https://github.com/valeoai/NAF/releases/download/model/naf_release.pth"
@@ -275,7 +275,7 @@ def _download_naf() -> Tuple[Path, Path]:
     NAF source is vendored under nodes/naf_pkg/ (see VENDORED.md for the
     upstream commit hash). This used to git-clone valeoai/NAF at first use,
     which broke on Windows test containers without git.exe on PATH
-    (WinError 2). Now the source ships with the pack -- only the ~100 MB
+    (WinError 2). Now the source ships with the pack -- only the ~2.7 MB
     .pth checkpoint downloads at runtime via urllib (portable, no system
     binaries).
     """

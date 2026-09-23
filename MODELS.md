@@ -15,7 +15,7 @@ locations into the paths the loaders use:
 | `pixal3d/pipeline.json` + `pixal3d/ckpts/` (7 safetensors + 7 json) | 24.0 GB | moved from `Pixal3D/TencentARC_Pixal3D/` (pipeline.json copied, snapshot keeps its own) |
 | `dinov3/model.safetensors` | 1.21 GB | moved from `Pixal3D/camenduru_dinov3-vitl16-pretrain-lvd1689m/` |
 | `moge/moge-2-vitl/model.pt` | 1.32 GB | moved from `Pixal3D/MoGe/moge-2-vitl/` |
-| `naf/naf_release.pth` | ~100 MB | auto-downloads from the valeoai/NAF GitHub release on first run |
+| `naf/naf_release.pth` | 2.7 MB | auto-downloads from the valeoai/NAF GitHub release on first run |
 
 Expected ckpt byte sizes (for future truncation checks):
 ss_flow 5,359,822,584 · img2shape_512 5,546,764,048 · img2shape_1024

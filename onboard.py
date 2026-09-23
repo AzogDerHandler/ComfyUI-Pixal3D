@@ -17,7 +17,7 @@ Expected layout this pack uses (all under ComfyUI/models/):
     pixal3d/pipeline.json + pixal3d/ckpts/*.safetensors|*.json   (~24 GB)
     dinov3/model.safetensors                                     (~1.2 GB)
     moge/moge-2-vitl/model.pt                                    (~1.3 GB)
-    naf/naf_release.pth                                          (~0.1 GB)
+    naf/naf_release.pth                                          (~3 MB)
   optional, multi-view nodes only (downloaded on first multi-view run):
     pixal3d/pipeline_mv.json + pixal3d/ckpts/*_mv.safetensors|*.json   (~22 GB)
 """
@@ -51,7 +51,7 @@ REQUIRED = {
     "pixal3d/ckpts/tex_dec_next_dc_f16c32_fp16.json": (10, 5_000),
     "dinov3/model.safetensors": (int(0.9 * GB), int(1.21 * GB)),
     "moge/moge-2-vitl/model.pt": (int(0.8 * GB), int(1.3 * GB)),
-    "naf/naf_release.pth": (int(0.05 * GB), int(0.11 * GB)),
+    "naf/naf_release.pth": (1_000_000, 2_664_431),   # the real checkpoint is 2.7 MB
 }
 
 # Multi-view DiTs (upstream f7cf384); decoders are shared with the entries above.

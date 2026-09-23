@@ -65,7 +65,7 @@ ComfyUI. Sanity check any time with:
 python install.py --check
 ```
 
-Model weights (~23 GB Pixal3D + 1.2 GB DINOv3 + 1.3 GB MoGe-2 + 100 MB NAF)
+Model weights (~23 GB Pixal3D + 1.2 GB DINOv3 + 1.3 GB MoGe-2 + 3 MB NAF)
 auto-download to `ComfyUI/models/` on first run — also on the persisted volume.
 The multi-view nodes add ~22 GB (`ckpts/*_mv`) on their first run.
 
