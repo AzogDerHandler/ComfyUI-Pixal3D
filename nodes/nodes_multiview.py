@@ -80,9 +80,10 @@ class Pixal3DMultiViewInput(io.ComfyNode):
             description=(
                 "Builds the multi-view bundle from an IMAGE batch of views around the object "
                 "(e.g. 4 or 8 frames of an orbit video) plus a camera rig given as azimuths / "
-                "elevations / FOV. Views are never cropped individually -- they must share one "
-                "scale and orbit center; non-square frames are padded (FOV corrected). Check the "
-                "preview + report before running the cascade."
+                "elevations / FOV. By default every view is rescaled so the object's bbox height "
+                "matches and recentered (align_views=bbox_height), which repairs frames of mixed "
+                "sizes / crops on an eye-level orbit. Check the preview + report before running "
+                "the cascade."
             ),
             inputs=[
                 io.Image.Input("images", tooltip="All views as one batch, in orbit order. RGBA works as-is."),
@@ -100,9 +101,9 @@ class Pixal3DMultiViewInput(io.ComfyNode):
                 io.Float.Input(
                     "fov_deg", default=20.0, min=1.0, max=120.0, step=0.1,
                     tooltip=(
-                        "Horizontal FOV of the frames as given (before padding), in degrees. 20 for "
-                        "upstream-style renders; for video frames wire Pixal3D Estimate Camera's "
-                        "fov_x_deg run on the front frame."
+                        "Horizontal FOV of the front frame as given, in degrees. 20 for upstream-style "
+                        "renders; for video frames wire Pixal3D Estimate Camera's fov_x_deg run on the "
+                        "front frame."
                     ),
                 ),
                 io.String.Input(
@@ -145,6 +146,17 @@ class Pixal3DMultiViewInput(io.ComfyNode):
                 io.Float.Input("distance", default=3.0, min=0.1, max=100.0, step=0.01, optional=True,
                                tooltip="Camera distance for framing=manual (voxel grid spans [-0.5, 0.5])."),
                 io.Float.Input("mesh_scale", default=1.0, min=0.1, max=10.0, step=0.05, optional=True),
+                # Last on purpose: saved workflows fill widgets by position.
+                io.Combo.Input(
+                    "align_views", options=list(mv_views.ALIGNS), default="bbox_height", optional=True,
+                    tooltip=(
+                        "bbox_height: rescale + recenter each view so the object's height matches -- on "
+                        "an eye-level orbit the height is the same from every side, so this fixes frames "
+                        "of different sizes or crops. none: use the frames exactly as given (only pads "
+                        "to square) -- more exact for frames that already share one camera, and required "
+                        "for elevated orbits."
+                    ),
+                ),
             ],
             outputs=_views_outputs(),
         )
@@ -159,6 +171,7 @@ class Pixal3DMultiViewInput(io.ComfyNode):
         view_at_plus_90: str,
         front_index: int,
         framing: str,
+        align_views: str = "bbox_height",
         masks=None,
         invert_mask: bool = False,
         grid_fill_margin: float = 1.1,
@@ -169,7 +182,7 @@ class Pixal3DMultiViewInput(io.ComfyNode):
         with _phase("Pixal3DMultiViewInput.execute"):
             views, preview, report = mv_views.views_from_orbit(
                 images, masks, invert_mask, azimuths, elevations, fov_deg, view_at_plus_90,
-                front_index, framing, grid_fill_margin, distance, mesh_scale,
+                front_index, framing, grid_fill_margin, distance, mesh_scale, align=align_views,
             )
             return io.NodeOutput(views, preview, report)
 

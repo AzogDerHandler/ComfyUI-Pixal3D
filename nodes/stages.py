@@ -645,7 +645,22 @@ def init_pipeline(attn_backend: str = "auto", vram_mode: str = "auto",
         _share_loaded_models()
         _set_attention_backends(attn_backend)
 
-        from .pixal3d.pipelines import Pixal3DImageTo3DPipeline, Pixal3DMVImageTo3DPipeline
+        try:
+            from .pixal3d.pipelines import Pixal3DImageTo3DPipeline, Pixal3DMVImageTo3DPipeline
+        except ImportError as e:
+            if "already registered" not in str(e):
+                raise
+            # pybind11 refuses a second compiled copy of the same C++ types in one
+            # process. visualbruno's ComfyUI-Trellis2 imports its own `cumesh` /
+            # `o_voxel` builds at startup; ours are the renamed `cumesh_vb` /
+            # `o_voxel_vb_ap` builds of the same code.
+            raise RuntimeError(
+                f"Pixal3D: {e} -- another custom node pack already loaded its own build of the "
+                f"same compiled library (loaded now: "
+                f"{sorted(m for m in ('cumesh', 'o_voxel', 'cumesh_vb', 'o_voxel_vb_ap') if m in sys.modules)}). "
+                "Usually that's ComfyUI-Trellis2. The two packs can't share one ComfyUI process: "
+                "disable one (rename its custom_nodes folder to end in .disabled) and restart."
+            ) from e
 
         with _phase(f"from_pretrained: {variant} cascade safetensors -> CPU"):
             if multiview:

@@ -212,6 +212,15 @@
             "name": "mesh_scale"
           },
           "link": null
+        },
+        {
+          "localized_name": "align_views",
+          "name": "align_views",
+          "type": "COMBO",
+          "widget": {
+            "name": "align_views"
+          },
+          "link": null
         }
       ],
       "outputs": [
@@ -248,7 +257,8 @@
         false,
         1.1,
         3.0,
-        1.0
+        1.0,
+        "bbox_height"
       ]
     },
     {

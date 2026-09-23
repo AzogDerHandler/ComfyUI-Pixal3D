@@ -43,6 +43,10 @@ ALTERNATIVE_MARGIN = 0.02
 
 DIRECTIONS = ("front_image_right_side", "front_image_left_side")
 FRAMINGS = ("auto_fit", "upstream_rig", "manual")
+ALIGNS = ("bbox_height", "none")
+# bbox_height alignment: square canvas, widest object bbox at 1/ALIGN_MARGIN of it.
+ALIGN_CANVAS = 1024
+ALIGN_MARGIN = 1.15
 
 
 # ============================================================================
@@ -208,6 +212,58 @@ def pad_to_square(rgb: np.ndarray, alpha: np.ndarray, fov_x: float) -> Tuple[np.
     return rgb_sq, a_sq, 2.0 * math.atan(math.tan(fov_x / 2.0) * S / W)
 
 
+def object_bbox(alpha: np.ndarray, thresh: float = 0.5) -> Tuple[int, int, int, int]:
+    """(y0, y1, x0, x1) half-open bbox of the object; specks under 1% of the largest blob are ignored."""
+    m = alpha > thresh
+    if not m.any():
+        raise ValueError("Pixal3D multi-view: a view's mask is empty -- check the mask inputs.")
+    try:
+        from scipy import ndimage
+        lab, n = ndimage.label(m)
+        if n > 1:
+            sizes = np.bincount(lab.ravel())[1:]
+            m = np.isin(lab, np.nonzero(sizes >= 0.01 * sizes.max())[0] + 1)
+    except ImportError:
+        pass
+    ys, xs = np.nonzero(m)
+    return int(ys.min()), int(ys.max()) + 1, int(xs.min()), int(xs.max()) + 1
+
+
+def align_by_height(views: Sequence[Tuple[np.ndarray, np.ndarray]], fov_x: float,
+                    size: int = ALIGN_CANVAS, margin: float = ALIGN_MARGIN):
+    """Rescale + recenter every view so the object's bbox height matches, on one square canvas.
+
+    On an eye-level orbit the object's vertical extent looks the same from every
+    azimuth, so equal bbox heights restore one shared scale across views that were
+    cropped or resized differently, and centering each bbox puts the orbit axis
+    through the object's bbox center (exact for 90-degree steps). Perspective makes
+    heights differ by a few percent per view, so frames that already share one
+    camera are more exact with align_views=none.
+
+    Returns (aligned [(rgb, alpha)], horizontal FOV of the canvas, notes). The canvas
+    keeps view 0's focal length (scaled with it), so `fov_x` is view 0's FOV as given.
+    """
+    boxes = [object_bbox(a) for _, a in views]
+    notes = [f"view {i}: the object is cut off at the top/bottom of its frame, so its height can't be matched"
+             for i, ((_, a), (y0, y1, _x0, _x1)) in enumerate(zip(views, boxes)) if y0 == 0 or y1 == a.shape[0]]
+    widest = max((x1 - x0) / (y1 - y0) for y0, y1, x0, x1 in boxes)
+    target_h = size / (margin * max(1.0, widest))
+    out = []
+    for (rgb, a), (y0, y1, x0, x1) in zip(views, boxes):
+        s = target_h / (y1 - y0)
+        H, W = a.shape
+        rgba = np.concatenate([rgb, a[..., None]], -1)
+        img = Image.fromarray((rgba * 255.0).round().astype(np.uint8), mode="RGBA")
+        img = img.resize((max(1, round(W * s)), max(1, round(H * s))), Image.Resampling.LANCZOS)
+        canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+        canvas.paste(img, (round(size / 2 - (x0 + x1) / 2 * s), round(size / 2 - (y0 + y1) / 2 * s)))
+        arr = np.asarray(canvas, dtype=np.float32) / 255.0
+        out.append((arr[..., :3], arr[..., 3]))
+    s0 = target_h / (boxes[0][1] - boxes[0][0])
+    f_px = views[0][1].shape[1] / 2.0 / math.tan(fov_x / 2.0) * s0
+    return out, 2.0 * math.atan(size / 2.0 / f_px), notes
+
+
 def cond_tensor(rgb: np.ndarray, alpha: np.ndarray, size: int) -> torch.Tensor:
     """inference_mv.to_cond_tensor: LANCZOS resize the RGBA view, premultiply -> [3, size, size]."""
     rgba = np.concatenate([rgb, alpha[..., None]], -1)
@@ -303,7 +359,8 @@ def render_preview(rgbs: Sequence[np.ndarray], alphas: Sequence[np.ndarray], cal
 
 def finalize(rgbs: Sequence[np.ndarray], alphas: Sequence[np.ndarray], c2w: torch.Tensor,
              fovs_rad: Sequence[float], mesh_scale: float, names: Sequence[str],
-             alternatives: Optional[dict] = None, preview_size: int = 512):
+             alternatives: Optional[dict] = None, notes: Sequence[str] = (),
+             preview_size: int = 512):
     """Square RGBA views + c2w [V,4,4] + per-view FOVs -> (bundle, preview [V,S,S,3], report str).
 
     The bundle is exactly what inference_mv.load_views builds for run_mv.
@@ -314,7 +371,7 @@ def finalize(rgbs: Sequence[np.ndarray], alphas: Sequence[np.ndarray], c2w: torc
     V = len(rgbs)
     fov = torch.tensor(list(fovs_rad), dtype=torch.float32)
     calc = relative_calc_mats(c2w)
-    notes = []
+    notes = list(notes)
 
     d0 = float(torch.norm(c2w[0, :3, 3]))
     front_err = float((c2w[0] - front_view_c2w(d0)).abs().max())
@@ -377,7 +434,7 @@ def finalize(rgbs: Sequence[np.ndarray], alphas: Sequence[np.ndarray], c2w: torc
 def views_from_orbit(images: torch.Tensor, masks: Optional[torch.Tensor], invert_mask: bool,
                      azimuths: str, elevations: str, fov_deg: float, direction: str,
                      front_index: int, framing: str, margin: float, distance: float,
-                     mesh_scale: float):
+                     mesh_scale: float, align: str = "bbox_height"):
     """Orbit rig (turntable / multi-view generator frames) -> finalize() outputs."""
     views = comfy_views(images, masks, invert_mask)
     V = len(views)
@@ -395,10 +452,23 @@ def views_from_orbit(images: torch.Tensor, masks: Optional[torch.Tensor], invert
     names = [f"f{order[i]} az{az[i] % 360:.0f} el{el[i]:.0f}" for i in range(V)]
 
     fov_in = math.radians(fov_deg)
-    squared = [pad_to_square(rgb, a, fov_in) for rgb, a in views]
-    rgbs = [s[0] for s in squared]
-    alphas = [s[1] for s in squared]
-    fovs = [s[2] for s in squared]
+    notes = []
+    if align == "bbox_height":
+        if any(abs(e) > 1e-6 for e in el):
+            notes.append("align_views=bbox_height assumes an eye-level orbit; with nonzero elevation the "
+                         "object's height legitimately differs per view -- use align_views=none")
+        aligned, fov_canvas, align_notes = align_by_height(views, fov_in)
+        notes += align_notes
+        rgbs = [v[0] for v in aligned]
+        alphas = [v[1] for v in aligned]
+        fovs = [fov_canvas] * V
+    elif align == "none":
+        squared = [pad_to_square(rgb, a, fov_in) for rgb, a in views]
+        rgbs = [s[0] for s in squared]
+        alphas = [s[1] for s in squared]
+        fovs = [s[2] for s in squared]
+    else:
+        raise ValueError(f"align_views must be one of {ALIGNS}")
 
     if framing == "auto_fit":
         d = fit_distance(alphas, fovs, margin, mesh_scale)
@@ -410,7 +480,8 @@ def views_from_orbit(images: torch.Tensor, masks: Optional[torch.Tensor], invert
         raise ValueError(f"framing must be one of {FRAMINGS}")
     other = DIRECTIONS[1 - DIRECTIONS.index(direction)]
     mirrored = {f"view_at_plus_90 = {other}": orbit_c2w([-a for a in az], el, d)}
-    return finalize(rgbs, alphas, orbit_c2w(az, el, d), fovs, mesh_scale, names, alternatives=mirrored)
+    return finalize(rgbs, alphas, orbit_c2w(az, el, d), fovs, mesh_scale, names,
+                    alternatives=mirrored, notes=notes)
 
 
 def views_from_dir(views_dir: str, num_views: int = 0):

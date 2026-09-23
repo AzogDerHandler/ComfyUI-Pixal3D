@@ -150,7 +150,7 @@ def test_orbit_node_path_equals_folder_path():
     frames = sorted(EXAMPLE.glob("view*.png"))
     arr = torch.from_numpy(np.stack([np.asarray(Image.open(p).convert("RGBA"), np.float32) / 255.0 for p in frames]))
     b_orbit, _, _ = mv.views_from_orbit(arr, None, False, "auto", "0", 20.0, "front_image_right_side",
-                                        0, "upstream_rig", 1.1, 0.0, 1.0)
+                                        0, "upstream_rig", 1.1, 0.0, 1.0, align="none")
     b_dir, _, _ = mv.views_from_dir(str(EXAMPLE))
     assert torch.allclose(b_orbit["transform_matrix"], b_dir["transform_matrix"], atol=1e-5)
     for s in mv.COND_SIZES:
@@ -167,7 +167,7 @@ def test_rig_check_accepts_correct_and_flags_flipped_direction():
     alphas = _synthetic()
     img, msk = _as_comfy(alphas)
     common = dict(masks=msk, invert_mask=False, azimuths="auto", elevations="10", front_index=0,
-                  framing="manual", margin=1.1, distance=2.2, mesh_scale=1.0, fov_deg=35.0)
+                  framing="manual", margin=1.1, distance=2.2, mesh_scale=1.0, fov_deg=35.0, align="none")
     _, _, good = mv.views_from_orbit(img, direction="front_image_right_side", **common)
     _, _, flipped = mv.views_from_orbit(img, direction="front_image_left_side", **common)
     print("correct:", good)
@@ -196,7 +196,7 @@ def test_auto_fit_frames_object_to_margin():
     alphas = _synthetic(d=d_true, el=0.0)
     img, msk = _as_comfy(alphas)
     bundle, _, report = mv.views_from_orbit(img, msk, False, "auto", "0", 35.0, "front_image_right_side",
-                                            0, "auto_fit", margin, 0.0, 1.0)
+                                            0, "auto_fit", margin, 0.0, 1.0, align="none")
     scale = float(bundle["camera_distance"][0, 0]) / d_true   # world scale of the fitted rig
     lin = torch.linspace(-0.6, 0.6, 121)
     pts = torch.stack(torch.meshgrid(lin, lin, lin, indexing="ij"), -1).reshape(-1, 3)
@@ -216,7 +216,7 @@ def test_tall_frames_with_their_own_fov_match_square_frames():
     fov_tall = math.degrees(2 * math.atan(math.tan(math.radians(fov) / 2) * w / res))
     img, msk = _as_comfy(tall)
     _, _, report = mv.views_from_orbit(img, msk, False, "auto", "10", fov_tall, "front_image_right_side",
-                                       0, "manual", 1.1, 2.2, 1.0)
+                                       0, "manual", 1.1, 2.2, 1.0, align="none")
     assert "coverage below" not in report, report
 
 
@@ -225,11 +225,56 @@ def test_front_index_rebases_azimuths():
     img, msk = _as_comfy(alphas)
     rolled = torch.roll(img, 1, 0), torch.roll(msk, 1, 0)       # the front view is now frame 1
     b, _, report = mv.views_from_orbit(rolled[0], rolled[1], False, "auto", "0", 35.0,
-                                       "front_image_right_side", 1, "manual", 1.1, 2.2, 1.0)
+                                       "front_image_right_side", 1, "manual", 1.1, 2.2, 1.0, align="none")
     ref_b, _, _ = mv.views_from_orbit(img, msk, False, "auto", "0", 35.0,
-                                      "front_image_right_side", 0, "manual", 1.1, 2.2, 1.0)
+                                      "front_image_right_side", 0, "manual", 1.1, 2.2, 1.0, align="none")
     assert torch.allclose(b["transform_matrix"], ref_b["transform_matrix"], atol=1e-5)
     assert torch.equal(b["images"][512], ref_b["images"][512])
+    assert "WARNING" not in report, report
+
+
+def _scramble(alphas, scales, offsets, sizes):
+    """Re-frame each square silhouette: rescale it, drop it at an offset into a canvas of another
+    size -- what separately cropped / resized frames of one orbit look like."""
+    out = []
+    for a, k, (dx, dy), (h, w) in zip(alphas, scales, offsets, sizes):
+        img = Image.fromarray((a * 255).astype(np.uint8)).resize(
+            (round(a.shape[1] * k), round(a.shape[0] * k)), Image.Resampling.LANCZOS)
+        canvas = Image.new("L", (w, h), 0)
+        canvas.paste(img, ((w - img.width) // 2 + dx, (h - img.height) // 2 + dy))
+        out.append(np.asarray(canvas, np.float32) / 255.0)
+    return out
+
+
+def test_bbox_height_alignment_repairs_mismatched_frames():
+    alphas = _synthetic(n_views=4, fov_deg=25.0, el=0.0, d=2.8)
+    frames = _scramble(alphas, scales=[1.0, 0.7, 1.25, 0.85], offsets=[(0, 0), (40, -25), (-30, 20), (15, 30)],
+                       sizes=[(256, 256), (300, 190), (360, 330), (240, 280)])
+    # A batch needs one size: center each frame on a common canvas (no resize), which keeps
+    # every frame's own scale and offset mismatch intact.
+    H, W = max(f.shape[0] for f in frames), max(f.shape[1] for f in frames)
+    msk_b = torch.zeros(4, H, W)
+    for i, f in enumerate(frames):
+        y0, x0 = (H - f.shape[0]) // 2, (W - f.shape[1]) // 2
+        msk_b[i, y0:y0 + f.shape[0], x0:x0 + f.shape[1]] = torch.from_numpy(f)
+    img_b = msk_b[..., None].repeat(1, 1, 1, 3) * 0.5
+    results = {}
+    for align in ("none", "bbox_height"):
+        _, _, report = mv.views_from_orbit(img_b, msk_b, False, "auto", "0", 25.0, "front_image_right_side",
+                                           0, "auto_fit", 1.1, 0.0, 1.0, align=align)
+        results[align] = report
+        print(f"align={align}: {report.splitlines()[0]}")
+    assert "coverage below" in results["none"], results["none"]
+    assert "coverage below" not in results["bbox_height"], results["bbox_height"]
+    assert "explains the silhouettes better" not in results["bbox_height"], results["bbox_height"]
+
+
+def test_bbox_height_alignment_keeps_consistent_views_consistent():
+    frames = sorted(EXAMPLE.glob("view*.png"))
+    arr = torch.from_numpy(np.stack([np.asarray(Image.open(p).convert("RGBA"), np.float32) / 255.0 for p in frames]))
+    _, _, report = mv.views_from_orbit(arr, None, False, "auto", "0", 20.0, "front_image_right_side",
+                                       0, "auto_fit", 1.1, 0.0, 1.0, align="bbox_height")
+    print("upstream example, bbox_height:", report)
     assert "WARNING" not in report, report
 
 

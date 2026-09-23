@@ -110,11 +110,16 @@ bundled upstream example end to end.
   left). If your frames rotate the other way set `view_at_plus_90 =
   front_image_left_side` — the report tells you when the other direction fits
   the silhouettes better.
-- **One shared scale and orbit center.** Never crop or recenter views one by
-  one (no `Pixal3DPreprocessImage` per view). Non-square frames are padded,
-  with the FOV corrected; upstream would squash them.
-- **FOV** is the horizontal FOV of the frames as given. For video frames, run
-  `Pixal3DEstimateCamera` on the front frame and wire `fov_x_deg`.
+- **One shared scale and orbit center.** `align_views=bbox_height` (default)
+  rescales every view so the object's bbox height matches and recenters it —
+  on an eye-level orbit the height is the same from every side, so this repairs
+  frames of different sizes or crops. Use `align_views=none` for frames that
+  already share one camera (renders, one uncropped video) — perspective makes
+  heights differ by a few percent, so as-given is more exact there — and for
+  elevated orbits, where the height legitimately changes per view. With `none`,
+  non-square frames are only padded (FOV corrected); upstream would squash them.
+- **FOV** is the horizontal FOV of the front frame as given. For video frames,
+  run `Pixal3DEstimateCamera` on the front frame and wire `fov_x_deg`.
 - **Masks:** no background removal happens here — feed RGBA, or a MASK batch
   from any rem-bg node (`invert_mask` for LoadImage's inverted MASK).
 
@@ -139,6 +144,14 @@ is cheap — check it before spending minutes on a run.
 - `Pixal3DRasterizePBR`: `texture_size` 4096–8192, wire `original_mesh` from
   GenerateMesh for BVH-snapped (sharper) textures
 - Use `workflows/pixal3d_basic.json` as the starting graph.
+
+## Conflicts
+
+visualbruno's **ComfyUI-Trellis2** loads its own builds of the same compiled
+libraries (`cumesh`, `o_voxel`) at startup; pybind11 refuses a second copy in one
+process (`generic_type: type "CuMesh" is already registered!`). The two packs
+can't run in the same ComfyUI — disable one (rename its `custom_nodes` folder to
+end in `.disabled`) and restart.
 
 ## Hardware
 
