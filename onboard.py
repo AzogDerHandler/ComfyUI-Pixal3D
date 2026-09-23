@@ -18,6 +18,8 @@ Expected layout this pack uses (all under ComfyUI/models/):
     dinov3/model.safetensors                                     (~1.2 GB)
     moge/moge-2-vitl/model.pt                                    (~1.3 GB)
     naf/naf_release.pth                                          (~0.1 GB)
+  optional, multi-view nodes only (downloaded on first multi-view run):
+    pixal3d/pipeline_mv.json + pixal3d/ckpts/*_mv.safetensors|*.json   (~22 GB)
 """
 
 import argparse
@@ -51,6 +53,20 @@ REQUIRED = {
     "moge/moge-2-vitl/model.pt": (int(0.8 * GB), int(1.3 * GB)),
     "naf/naf_release.pth": (int(0.05 * GB), int(0.11 * GB)),
 }
+
+# Multi-view DiTs (upstream f7cf384); decoders are shared with the entries above.
+OPTIONAL_MV = {
+    "pixal3d/pipeline_mv.json": (100, 10_000),
+    "pixal3d/ckpts/ss_flow_img_dit_1_3B_64_bf16_mv.safetensors": (int(5.0 * GB), int(5.36 * GB)),
+    "pixal3d/ckpts/slat_flow_img2shape_dit_1_3B_512_bf16_mv.safetensors": (int(5.2 * GB), int(5.55 * GB)),
+    "pixal3d/ckpts/slat_flow_img2shape_dit_1_3B_1024_bf16_mv.safetensors": (int(5.2 * GB), int(5.55 * GB)),
+    "pixal3d/ckpts/slat_flow_imgshape2tex_dit_1_3B_1024_bf16_mv.safetensors": (int(5.2 * GB), int(5.55 * GB)),
+    "pixal3d/ckpts/ss_flow_img_dit_1_3B_64_bf16_mv.json": (10, 5_000),
+    "pixal3d/ckpts/slat_flow_img2shape_dit_1_3B_512_bf16_mv.json": (10, 5_000),
+    "pixal3d/ckpts/slat_flow_img2shape_dit_1_3B_1024_bf16_mv.json": (10, 5_000),
+    "pixal3d/ckpts/slat_flow_imgshape2tex_dit_1_3B_1024_bf16_mv.json": (10, 5_000),
+}
+ALL_WEIGHTS = {**REQUIRED, **OPTIONAL_MV}
 
 
 def log(msg=""):
@@ -112,7 +128,7 @@ def _hf_hub_dirs():
 
 def scan_candidates(models_dir: Path):
     """One walk over plausible roots; returns basename -> [Path, ...]."""
-    wanted = {Path(rel).name for rel in REQUIRED}
+    wanted = {Path(rel).name for rel in ALL_WEIGHTS}
     roots = [models_dir]
     roots += _hf_hub_dirs()
     torch_hub = Path.home() / ".cache" / "torch"
@@ -136,7 +152,7 @@ def _plausible(rel: str, path: Path) -> bool:
         size = path.stat().st_size
     except OSError:
         return False
-    min_size, _ = REQUIRED[rel]
+    min_size, _ = ALL_WEIGHTS[rel]
     if size < min_size:
         return False
     s = str(path).lower()
@@ -165,11 +181,12 @@ def run(models_dir: Path, migrate: bool):
     log("=== Weights inventory ===")
     index = scan_candidates(models_dir)
 
-    missing_dl = 0
+    missing_dl = missing_mv_dl = 0
     linked = present = suspect = 0
     to_download = []
 
-    for rel, (min_size, approx) in REQUIRED.items():
+    for rel, (min_size, approx) in ALL_WEIGHTS.items():
+        optional = rel in OPTIONAL_MV
         target = models_dir / rel
         if target.exists():
             size = target.stat().st_size
@@ -195,6 +212,9 @@ def run(models_dir: Path, migrate: bool):
             else:
                 log(f"FOUND    {rel}  at  {cand}  (run with --migrate to link)")
                 linked += 1
+        elif optional:
+            log(f"MISSING  {rel}  (multi-view only; ~{human(approx)} download on first multi-view run)")
+            missing_mv_dl += approx
         else:
             log(f"MISSING  {rel}  (~{human(approx)} download on first run)")
             to_download.append(rel)
@@ -207,6 +227,8 @@ def run(models_dir: Path, migrate: bool):
         log(f"first run will download ~{human(missing_dl)}")
     else:
         log("no downloads needed on first run")
+    if missing_mv_dl:
+        log(f"multi-view nodes will download ~{human(missing_mv_dl)} more on their first run")
     if not migrate and linked:
         log("re-run with --migrate to symlink the reusable files into place")
     log()

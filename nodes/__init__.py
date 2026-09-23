@@ -18,15 +18,21 @@ from .nodes_mesh import (
     NODE_CLASS_MAPPINGS as mesh_mappings,
     NODE_DISPLAY_NAME_MAPPINGS as mesh_display,
 )
+from .nodes_multiview import (
+    NODE_CLASS_MAPPINGS as multiview_mappings,
+    NODE_DISPLAY_NAME_MAPPINGS as multiview_display,
+)
 
 NODE_CLASS_MAPPINGS = {
     **loader_mappings,
     **inference_mappings,
     **mesh_mappings,
+    **multiview_mappings,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     **loader_display,
     **inference_display,
     **mesh_display,
+    **multiview_display,
 }

@@ -5,6 +5,12 @@
 > `vram_mode=full_gpu` un-hardcodes `low_vram`, camera estimation is in-pack
 > (`Pixal3DEstimateCamera`, vendored MoGe-2), and the license situation changed
 > upstream to MIT (code + weights) on 2026-06-13.
+>
+> **MULTI-VIEW (2026-09):** upstream f7cf384's MV pipeline/extractor are vendored
+> (`pipelines/pixal3d_mv_image_to_3d.py`, `ProjGridMV` / `DinoV3ProjMultiViewFeatureExtractor`
+> in `image_conditioned_proj.py`). `nodes/mv_views.py` (pure torch, tested off-GPU by
+> `tests/test_mv_views.py`) builds the `run_mv` bundle + rig check; `nodes/nodes_multiview.py`
+> holds the nodes. The "Multi-view input" out-of-scope item below is done.
 
 # ComfyUI-Pixal3D — Wrapping Plan
 

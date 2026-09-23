@@ -1,7 +1,7 @@
 # ComfyUI-Pixal3D (envless fork)
 
 ComfyUI nodes for **Pixal3D** (SIGGRAPH 2026, TencentARC) — pixel-aligned image-to-3D
-generation. Single image in, textured PBR GLB out.
+generation. Single image — or several posed views — in, textured PBR GLB out.
 
 Fork of [PozzettiAndrea/ComfyUI-Pixal3D](https://github.com/PozzettiAndrea/ComfyUI-Pixal3D),
 rebuilt for **cloud GPU providers (RunComfy, RunPod, ...)** and **max quality on
@@ -21,6 +21,9 @@ big-VRAM machines**:
   262144, 8K texture bake on the split PBR chain, up to 5M faces.
 - FlexGEMM's triton autotune cache is persisted next to the pack (kills the
   "first run after every restart is slow" tax on ephemeral pods).
+- **Multi-view** (upstream's Sep 2026 release): condition the cascade on 2–9+
+  views of the same object — orbit-video frames, multi-view generator output,
+  or a dataset folder — with a built-in rig check before the run.
 
 Upstream model: [code](https://github.com/TencentARC/Pixal3D) ·
 [weights](https://huggingface.co/TencentARC/Pixal3D) ·
@@ -64,6 +67,7 @@ python install.py --check
 
 Model weights (~23 GB Pixal3D + 1.2 GB DINOv3 + 1.3 GB MoGe-2 + 100 MB NAF)
 auto-download to `ComfyUI/models/` on first run — also on the persisted volume.
+The multi-view nodes add ~22 GB (`ckpts/*_mv`) on their first run.
 
 Useful env vars: `PIXAL3D_WHEEL_INDEX` (alternate wheel index),
 `PIXAL3D_VENDOR_APPEND=1` (host packages win over vendor pins),
@@ -83,6 +87,49 @@ If you switch to a machine with a different Python/torch/CUDA, re-run
 | `Pixal3DCameraFromFOV` | Manual FOV → camera dict (bypass MoGe for synthetic/known cameras). |
 | `Pixal3DGenerateGLB` | Fused cascade → vertex-color GLB (fast convenience path, no UV textures). |
 | `Pixal3DGenerateMesh` → `Pixal3DProcessMesh` → `Pixal3DRasterizePBR` → `Pixal3DExportGLB` | **The quality path**: raw mesh + PBR voxel grid → cleanup/UV unwrap → UV-space PBR bake (up to 8192px) → GLB. |
+| `Pixal3DMultiViewInput` | IMAGE batch of views (+ MASK batch) + orbit rig (azimuths / elevations / FOV) → multi-view bundle, preview, report. |
+| `Pixal3DLoadMultiViewFolder` | Upstream-format folder (`transforms.json` + RGBA views) → multi-view bundle. Empty path = bundled upstream example. |
+| `Pixal3DGenerateMeshMV` / `Pixal3DGenerateGLBMV` | Multi-view twins of GenerateMesh / GenerateGLB. The mesh output plugs into the same ProcessMesh → RasterizePBR → ExportGLB chain. |
+
+## Multi-view
+
+Upstream's multi-view release (TencentARC/Pixal3D `f7cf384`) conditions the
+same four-stage cascade on V views at once: every view's DINOv3+NAF features
+are projected into the shared voxel grid through its camera and averaged. It
+uses separate `ckpts/*_mv` flow DiTs (~22 GB, downloaded on the first
+multi-view run); decoders, DINOv3 and NAF are shared with single-view (one copy
+in memory). Start from `workflows/pixal3d_multiview.json`, which runs the
+bundled upstream example end to end.
+
+**The cameras must be known and the views must agree with them:**
+
+- **View 0 is the front view.** The mesh is posed in its camera frame, so an
+  eye-level front view gives an upright mesh (`front_index` picks it).
+- **Azimuth direction:** +90° means the camera moved toward the side that is on
+  the **right of the front image** (upstream: camera at +X, sees the object's
+  left). If your frames rotate the other way set `view_at_plus_90 =
+  front_image_left_side` — the report tells you when the other direction fits
+  the silhouettes better.
+- **One shared scale and orbit center.** Never crop or recenter views one by
+  one (no `Pixal3DPreprocessImage` per view). Non-square frames are padded,
+  with the FOV corrected; upstream would squash them.
+- **FOV** is the horizontal FOV of the frames as given. For video frames, run
+  `Pixal3DEstimateCamera` on the front frame and wire `fov_x_deg`.
+- **Masks:** no background removal happens here — feed RGBA, or a MASK batch
+  from any rem-bg node (`invert_mask` for LoadImage's inverted MASK).
+
+`framing=auto_fit` (default) derives the camera distance from the silhouettes
+so the object fills `1/grid_fill_margin` of the voxel grid — the same framing
+single-view uses. `upstream_rig` reproduces upstream's example rig (unit cube
+at 1/1.1 of the frame, distance `1.1·0.5/tan(fov/2)`).
+
+**Rig check.** Before the cascade, the input node carves a visual hull from all
+silhouettes through the rig and reprojects it into every view. The `preview`
+shows what the rig can't explain in red (plus the voxel-grid bounds in yellow,
+its +X face — the object's left — in green); the `report` gives per-view
+silhouette coverage (a consistent rig scores ~95–100%) and flags a flipped
+rotation direction, off-center or clipped objects, and a non-front view 0. It
+is cheap — check it before spending minutes on a run.
 
 ## Max-quality recipe (big cloud GPU)
 
@@ -97,7 +144,9 @@ If you switch to a machine with a different Python/torch/CUDA, re-run
 
 - NVIDIA GPU, **SM ≥ 8.0** (Ampere/Ada/Hopper/Blackwell).
 - `full_gpu` + 1536_cascade wants ~40 GB+ VRAM; `low_vram` + 1024_cascade fits 24 GB.
-- ~30 GB disk for weights, ~5 GB for vendor/.
+- ~30 GB disk for weights (+22 GB with multi-view), ~5 GB for vendor/.
+- Multi-view in `full_gpu`: only one variant's flow DiTs (~11 GB) is resident at
+  a time; switching between single- and multi-view swaps them.
 
 ## Credits
 

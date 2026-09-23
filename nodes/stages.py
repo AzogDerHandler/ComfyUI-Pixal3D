@@ -150,22 +150,28 @@ IMAGE_COND_CONFIGS = {
 }
 
 # Files we expect in the local pixal3d models dir, mirroring hf_models/TencentARC_Pixal3D.json.
-_REQUIRED_FILES = [
-    "pipeline.json",
+# The three decoders are shared by the single-view and multi-view pipelines.
+_DECODER_FILES = [
     "ckpts/shape_dec_next_dc_f16c32_fp16.json",
     "ckpts/shape_dec_next_dc_f16c32_fp16.safetensors",
-    "ckpts/slat_flow_img2shape_dit_1_3B_1024_bf16.json",
-    "ckpts/slat_flow_img2shape_dit_1_3B_1024_bf16.safetensors",
-    "ckpts/slat_flow_img2shape_dit_1_3B_512_bf16.json",
-    "ckpts/slat_flow_img2shape_dit_1_3B_512_bf16.safetensors",
-    "ckpts/slat_flow_imgshape2tex_dit_1_3B_1024_bf16.json",
-    "ckpts/slat_flow_imgshape2tex_dit_1_3B_1024_bf16.safetensors",
     "ckpts/ss_dec_conv3d_16l8_fp16.json",
     "ckpts/ss_dec_conv3d_16l8_fp16.safetensors",
-    "ckpts/ss_flow_img_dit_1_3B_64_bf16.json",
-    "ckpts/ss_flow_img_dit_1_3B_64_bf16.safetensors",
     "ckpts/tex_dec_next_dc_f16c32_fp16.json",
     "ckpts/tex_dec_next_dc_f16c32_fp16.safetensors",
+]
+_FLOW_MODELS = [
+    "ckpts/ss_flow_img_dit_1_3B_64_bf16",
+    "ckpts/slat_flow_img2shape_dit_1_3B_512_bf16",
+    "ckpts/slat_flow_img2shape_dit_1_3B_1024_bf16",
+    "ckpts/slat_flow_imgshape2tex_dit_1_3B_1024_bf16",
+]
+_REQUIRED_FILES = ["pipeline.json"] + _DECODER_FILES + [
+    f"{m}.{ext}" for m in _FLOW_MODELS for ext in ("json", "safetensors")
+]
+# Multi-view DiTs (upstream f7cf384): same architecture, separate `*_mv` weights
+# selected by pipeline_mv.json. ~22 GB, downloaded on first multi-view use only.
+_REQUIRED_FILES_MV = ["pipeline_mv.json"] + _DECODER_FILES + [
+    f"{m}_mv.{ext}" for m in _FLOW_MODELS for ext in ("json", "safetensors")
 ]
 
 
@@ -187,8 +193,12 @@ def _local_pixal3d_dir() -> Path:
 # ============================================================================
 
 _pipeline = None
-# Resolved VRAM mode currently applied to _pipeline ("full_gpu"/"low_vram").
-_pipeline_vram_mode = None
+# Multi-view pipeline (pipeline_mv.json). Shares the decoders, DINOv3 and NAF
+# with _pipeline; only its four flow DiTs are separate.
+_pipeline_mv = None
+# checkpoint path -> model, filled by _share_loaded_models so both pipelines
+# get the SAME decoder instances instead of loading them twice.
+_loaded_models: dict = {}
 # MoGe-2 camera-estimation model (lazy, lives on CPU between calls).
 _moge = None
 # id(model_instance) -> ModelPatcher. Used by _wrap_with_comfy_patcher to route
@@ -229,7 +239,7 @@ def _check_gpu_or_raise():
 # Download
 # ============================================================================
 
-def _download_pixal3d_weights():
+def _download_pixal3d_weights(files=_REQUIRED_FILES):
     """Ensure Pixal3D ckpts exist in ComfyUI/models/pixal3d/."""
     from huggingface_hub import hf_hub_download
 
@@ -237,7 +247,7 @@ def _download_pixal3d_weights():
     log.info(f"[pixal3d] Ensuring weights present in {local_dir}")
 
     tqdm_cls = _comfy_tqdm()
-    for rel_path in _REQUIRED_FILES:
+    for rel_path in files:
         target = local_dir / rel_path
         if target.exists():
             continue
@@ -349,6 +359,31 @@ def _stub_rembg():
 
     _rembg.BiRefNet.__init__ = _stub_init
     _rembg.BiRefNet._pixal3d_stubbed = True
+
+
+def _share_loaded_models():
+    """Memoize pixal3d.models.from_pretrained by checkpoint path.
+
+    pipeline.json and pipeline_mv.json name the same three decoder checkpoints;
+    with this, building the second pipeline reuses the first one's decoder
+    instances (one copy in RAM/VRAM, one ModelPatcher each) and only loads its
+    own four flow DiTs. Idempotent.
+    """
+    from .pixal3d import models as _models
+    if getattr(_models.from_pretrained, "_pixal3d_shared", False):
+        return
+    orig = _models.from_pretrained
+
+    def _shared(path, **kwargs):
+        if kwargs:
+            return orig(path, **kwargs)
+        key = os.path.realpath(path)
+        if key not in _loaded_models:
+            _loaded_models[key] = orig(path)
+        return _loaded_models[key]
+
+    _shared._pixal3d_shared = True
+    _models.from_pretrained = _shared
 
 
 def _resolve_attn_backend(backend: str) -> str:
@@ -535,13 +570,20 @@ def _apply_vram_mode(pipeline, resolved: str):
     patched to route through load_models_gpu) and all the per-stage `.cpu()`
     offloads inside pipeline.run() are skipped — they're guarded by
     `if self.low_vram`. Weights stay resident between runs; no PCIe shuffling.
+    Only one variant's four flow DiTs (~11 GB) is resident at a time: going
+    full_gpu offloads the other variant's DiTs; the shared decoders stay put.
     """
-    global _pipeline_vram_mode
-    if _pipeline_vram_mode == resolved:
+    if getattr(pipeline, "_pixal3d_vram_mode", None) == resolved:
         return
+    other = _pipeline if getattr(pipeline, "_pixal3d_multiview", False) else _pipeline_mv
     device = _mm().get_torch_device()
     with _phase(f"apply vram_mode={resolved}"):
         if resolved == "full_gpu":
+            if other is not None:
+                mine = {id(m) for m in pipeline.models.values()}
+                for m in other.models.values():
+                    if id(m) not in mine:
+                        m.cpu()
             pipeline.low_vram = False
             # Base Pipeline.to() iterates self.models -> each patched .to()
             # informs ComfyUI's memory manager, then physically moves.
@@ -552,7 +594,7 @@ def _apply_vram_mode(pipeline, resolved: str):
                     m.to(device)
         else:
             pipeline.low_vram = True
-            if _pipeline_vram_mode == "full_gpu":
+            if getattr(pipeline, "_pixal3d_vram_mode", None) == "full_gpu":
                 for m in pipeline.models.values():
                     m.cpu()
                 for attr in _COND_ATTRS:
@@ -562,11 +604,20 @@ def _apply_vram_mode(pipeline, resolved: str):
             # With low_vram=True this only records the target device; the
             # per-stage swap moves models as each stage needs them.
             pipeline.to(device)
-    _pipeline_vram_mode = resolved
+    pipeline._pixal3d_vram_mode = resolved
+    if other is not None:
+        # The moves above can touch models the two variants share; make the
+        # other variant re-establish its residency on its next use.
+        other._pixal3d_vram_mode = None
 
 
-def init_pipeline(attn_backend: str = "auto", vram_mode: str = "auto") -> "object":
-    """Load + cache Pixal3D pipeline + 4 DinoV3 cond models. Idempotent.
+def init_pipeline(attn_backend: str = "auto", vram_mode: str = "auto",
+                  multiview: bool = False) -> "object":
+    """Load + cache a Pixal3D pipeline + its 4 DinoV3 cond models. Idempotent.
+
+    multiview: build Pixal3DMVImageTo3DPipeline from pipeline_mv.json (the
+      `*_mv` flow DiTs + multi-view cond extractors) instead of the single-view
+      pipeline. Both can be cached at once; they share decoders/DINOv3/NAF.
 
     vram_mode:
       full_gpu -- all 13 models stay resident on the GPU (fastest; needs a
@@ -574,30 +625,34 @@ def init_pipeline(attn_backend: str = "auto", vram_mode: str = "auto") -> "objec
       low_vram -- pixal3d's per-stage swap; off-stage models on CPU (fits 24 GB).
       auto     -- full_gpu when total VRAM >= 30 GB, else low_vram.
     """
-    global _pipeline
+    global _pipeline, _pipeline_mv
     resolved_mode = _resolve_vram_mode(vram_mode)
-    if _pipeline is not None:
+    cached = _pipeline_mv if multiview else _pipeline
+    if cached is not None:
         _set_attention_backends(attn_backend)
-        _apply_vram_mode(_pipeline, resolved_mode)
-        return _pipeline
+        _apply_vram_mode(cached, resolved_mode)
+        return cached
 
     _check_gpu_or_raise()
+    variant = "multi-view" if multiview else "single-view"
 
-    with _phase("init_pipeline TOTAL"):
-        with _phase("download Pixal3D weights"):
-            local_dir = _download_pixal3d_weights()
+    with _phase(f"init_pipeline ({variant}) TOTAL"):
+        with _phase(f"download Pixal3D {variant} weights"):
+            local_dir = _download_pixal3d_weights(_REQUIRED_FILES_MV if multiview else _REQUIRED_FILES)
 
         _stub_rembg()
         _patch_naf_to_local_model()
+        _share_loaded_models()
         _set_attention_backends(attn_backend)
 
-        from .pixal3d.pipelines import Pixal3DImageTo3DPipeline
-        from .pixal3d.trainers.flow_matching.mixins.image_conditioned_proj import (
-            DinoV3ProjFeatureExtractor,
-        )
+        from .pixal3d.pipelines import Pixal3DImageTo3DPipeline, Pixal3DMVImageTo3DPipeline
 
-        with _phase("from_pretrained: 8 cascade safetensors -> CPU"):
-            pipeline = Pixal3DImageTo3DPipeline.from_pretrained(str(local_dir))
+        with _phase(f"from_pretrained: {variant} cascade safetensors -> CPU"):
+            if multiview:
+                pipeline = Pixal3DMVImageTo3DPipeline.from_pretrained(str(local_dir), "pipeline_mv.json")
+            else:
+                pipeline = Pixal3DImageTo3DPipeline.from_pretrained(str(local_dir))
+        pipeline._pixal3d_multiview = multiview
 
         # We never call pipeline.preprocess_image (rembg is stubbed and our
         # Pixal3DPreprocessImage node is pure PIL). Nulling the wrapper keeps
@@ -606,7 +661,7 @@ def init_pipeline(attn_backend: str = "auto", vram_mode: str = "auto") -> "objec
 
         for key in ("ss", "shape_512", "shape_1024", "tex_1024"):
             with _phase(f"build DinoV3 cond '{key}'"):
-                setattr(pipeline, f"image_cond_model_{key}", _build_cond(key))
+                setattr(pipeline, f"image_cond_model_{key}", _build_cond(key, multiview=multiview))
 
         # Per-stage swap routed through ComfyUI's ModelPatcher / load_models_gpu.
         # pixal3d's pipeline.run() already calls `model.to(device)` / `model.cpu()`
@@ -630,27 +685,28 @@ def init_pipeline(attn_backend: str = "auto", vram_mode: str = "auto") -> "objec
         # cond's own `.to()` override would then physically move NAF (re-entering NAF's
         # patched `.to`), and ComfyUI's bookkeeping for NAF would drift.
         with _phase("NAF: build singleton + attach to 3 cond models"):
-            for attr in (
-                "image_cond_model_ss",
-                "image_cond_model_shape_512",
-                "image_cond_model_shape_1024",
-                "image_cond_model_tex_1024",
-            ):
+            for attr in _COND_ATTRS:
                 m = getattr(pipeline, attr, None)
                 if m is not None and getattr(m, "use_naf_upsample", False):
                     m._load_naf()
 
+        # Shared decoders are already wrapped if the other variant loaded first
+        # (_wrap_with_comfy_patcher is idempotent per instance).
         with _phase("ModelPatcher wrap: cascade + cond + shared backbones"):
             _wrap_pipeline_models_with_patchers(pipeline)
 
         _apply_vram_mode(pipeline, resolved_mode)
 
-    _pipeline = pipeline
+    if multiview:
+        _pipeline_mv = pipeline
+    else:
+        _pipeline = pipeline
     return pipeline
 
 
-def _build_cond(key: str):
-    """Build a DinoV3 cond extractor for stage `key`.
+def _build_cond(key: str, multiview: bool = False):
+    """Build a DinoV3 cond extractor for stage `key` (the multi-view variant if
+    `multiview`: same backbone/NAF, averages the V views' projected features).
 
     All 4 stage configs share the same DINOV3_REPO backbone but differ in
     image_size / grid_resolution / NAF target. The cond extractor's __init__
@@ -668,8 +724,14 @@ def _build_cond(key: str):
     global _shared_dinov3
     from .pixal3d.trainers.flow_matching.mixins.image_conditioned_proj import (
         DinoV3ProjFeatureExtractor,
+        DinoV3ProjMultiViewFeatureExtractor,
     )
-    model = DinoV3ProjFeatureExtractor(**IMAGE_COND_CONFIGS[key])
+    if multiview:
+        # "average" keeps the fused feature shape identical to single-view, which
+        # is what the released *_mv DiTs were trained with (inference_mv.py).
+        model = DinoV3ProjMultiViewFeatureExtractor(**IMAGE_COND_CONFIGS[key], multiview_fusion="average")
+    else:
+        model = DinoV3ProjFeatureExtractor(**IMAGE_COND_CONFIGS[key])
     model.eval()
 
     # First cond builds the backbone via our vendored plain nn.Module
@@ -966,8 +1028,8 @@ def estimate_camera(
 
 
 def _run_cascade(
-    image: torch.Tensor,
-    camera_params: dict,
+    image: Optional[torch.Tensor],
+    camera_params: Optional[dict],
     seed: int,
     pipeline_type: str,
     attn_backend: str,
@@ -976,15 +1038,15 @@ def _run_cascade(
     ss_steps: int, ss_guidance: float, ss_rescale: float, ss_rescale_t: float,
     shape_steps: int, shape_guidance: float, shape_rescale: float, shape_rescale_t: float,
     tex_steps: int, tex_guidance: float, tex_rescale: float, tex_rescale_t: float,
+    views: Optional[dict] = None,
 ):
-    """Run the 4-stage cascade. Returns (pipeline, MeshWithVoxel, resolution)."""
-    pipeline = init_pipeline(attn_backend=attn_backend, vram_mode=vram_mode)
-    pil = comfy_image_to_pil(image)
-    torch.manual_seed(seed)
-    log.info(f"[pixal3d] Running cascade ({pipeline_type}, seed={seed})")
-    mesh_list, (shape_slat, tex_slat, res) = pipeline.run(
-        pil,
-        camera_params=camera_params,
+    """Run the 4-stage cascade. Returns (pipeline, MeshWithVoxel, resolution).
+
+    With `views` (a PIXAL3D_MV_VIEWS bundle from mv_views) the multi-view
+    pipeline runs instead and `image` / `camera_params` are ignored.
+    """
+    pipeline = init_pipeline(attn_backend=attn_backend, vram_mode=vram_mode, multiview=views is not None)
+    run_kwargs = dict(
         seed=seed,
         sparse_structure_sampler_params={
             "steps": ss_steps, "guidance_strength": ss_guidance,
@@ -998,11 +1060,23 @@ def _run_cascade(
             "steps": tex_steps, "guidance_strength": tex_guidance,
             "guidance_rescale": tex_rescale, "rescale_t": tex_rescale_t,
         },
-        preprocess_image=False,
         return_latent=True,
         pipeline_type=pipeline_type,
         max_num_tokens=max_num_tokens,
     )
+    torch.manual_seed(seed)
+    if views is not None:
+        log.info(f"[pixal3d] Running multi-view cascade ({pipeline_type}, seed={seed}, "
+                 f"V={views['transform_matrix'].shape[1]})")
+        mesh_list, (shape_slat, tex_slat, res) = pipeline.run_mv(views, **run_kwargs)
+    else:
+        log.info(f"[pixal3d] Running cascade ({pipeline_type}, seed={seed})")
+        mesh_list, (shape_slat, tex_slat, res) = pipeline.run(
+            comfy_image_to_pil(image),
+            camera_params=camera_params,
+            preprocess_image=False,
+            **run_kwargs,
+        )
     mw = mesh_list[0]
     log.info(f"[pixal3d] Mesh extracted at resolution {res}")
     del shape_slat, tex_slat, mesh_list
@@ -1742,14 +1816,17 @@ def generate_mesh_and_voxelgrid(
     ss_steps: int = 12, ss_guidance: float = 7.5, ss_rescale: float = 0.7, ss_rescale_t: float = 5.0,
     shape_steps: int = 12, shape_guidance: float = 7.5, shape_rescale: float = 0.5, shape_rescale_t: float = 3.0,
     tex_steps: int = 12, tex_guidance: float = 1.0, tex_rescale: float = 0.0, tex_rescale_t: float = 3.0,
+    views: Optional[dict] = None,
 ):
     """Run the cascade and split the result into IPC-safe (TRIMESH, PIXAL3D_VOXELGRID).
-    The trimesh is the raw DC mesh in pixal3d internal coords ([-0.5, 0.5]^3, Z-up)."""
+    The trimesh is the raw DC mesh in pixal3d internal coords ([-0.5, 0.5]^3, Z-up).
+    Pass `views` (PIXAL3D_MV_VIEWS) instead of image/camera_params for multi-view."""
     pipeline, mw, _res = _run_cascade(
         image, camera_params, seed, pipeline_type, attn_backend, vram_mode, max_num_tokens,
         ss_steps, ss_guidance, ss_rescale, ss_rescale_t,
         shape_steps, shape_guidance, shape_rescale, shape_rescale_t,
         tex_steps, tex_guidance, tex_rescale, tex_rescale_t,
+        views=views,
     )
     tri = _trimesh_from_meshwithvoxel(mw)
     voxelgrid = _meshwithvoxel_to_dict(mw, pipeline)
@@ -1783,6 +1860,7 @@ def generate_glb(
     double_sided: bool = False,
     remove_inner_faces: bool = False,
     filename_prefix: str = "pixal3d",
+    views: Optional[dict] = None,
 ) -> str:
     """Cascade -> light cleanup -> vertex-color bake -> GLB. The monolithic convenience
     path: no UV unwrap, no texture map, fast. For UV-baked output use the split node
@@ -1792,6 +1870,7 @@ def generate_glb(
         ss_steps, ss_guidance, ss_rescale, ss_rescale_t,
         shape_steps, shape_guidance, shape_rescale, shape_rescale_t,
         tex_steps, tex_guidance, tex_rescale, tex_rescale_t,
+        views=views,
     )
     cleaned = _light_clean(tri, remove_inner_faces=remove_inner_faces)
     colored = _bake_vertex_colors(cleaned, voxelgrid, force_opaque=force_opaque, double_sided=double_sided)

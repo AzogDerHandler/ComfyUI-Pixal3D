@@ -3,6 +3,7 @@ import importlib
 __attributes = {
     "Trellis2ImageTo3DPipeline": "trellis2_image_to_3d",
     "Pixal3DImageTo3DPipeline": "pixal3d_image_to_3d",
+    "Pixal3DMVImageTo3DPipeline": "pixal3d_mv_image_to_3d",
 }
 
 
@@ -51,3 +52,4 @@ if __name__ == '__main__':
     from . import samplers, rembg
     from .trellis2_image_to_3d import Trellis2ImageTo3DPipeline
     from .pixal3d_image_to_3d import Pixal3DImageTo3DPipeline
+    from .pixal3d_mv_image_to_3d import Pixal3DMVImageTo3DPipeline

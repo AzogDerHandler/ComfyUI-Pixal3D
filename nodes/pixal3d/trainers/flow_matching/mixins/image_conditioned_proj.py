@@ -83,7 +83,7 @@ def project_points_to_image_batch(
     points_homogeneous = torch.cat([points_3d_batch, ones], dim=-1)  # [B, N, 4]
     
     # Compute world to camera transformation matrix
-    world_to_camera = torch.linalg.inv(transform_matrix)  # [B, 4, 4]
+    world_to_camera = torch.linalg.inv(transform_matrix.float()).to(transform_matrix.dtype)  # linalg.inv requires fp32+
     
     # Batch transform to camera coordinate system: [B, N, 4] @ [B, 4, 4]^T -> [B, N, 3]
     points_camera = torch.bmm(points_homogeneous, world_to_camera.transpose(-2, -1))[..., :3]  # [B, N, 3]
@@ -351,6 +351,102 @@ class ProjGrid(nn.Module):
                 print(f"Saved projection visualization to: {save_path}")
         
         return vis_images
+
+
+class ProjGridMV(ProjGrid):
+    """
+    Multi-view variant of ProjGrid.
+
+    Identical to ProjGrid except it ALLOWS an explicit per-view transform_matrix
+    (calc_mat) to be passed in for projection (the base ProjGrid asserts it is
+    None and always uses the fixed front-view matrix). This is used by the
+    multi-view feature extractor to project the SAME 3D grid through each view's
+    relative pose (calc_mat_i = F @ inv(C_0) @ C_i).
+
+    When transform_matrix is None it falls back to the front-view + distance
+    behavior, so it is a strict superset of ProjGrid.
+    """
+
+    def forward(
+        self,
+        features_map: torch.Tensor,
+        camera_angle_x: torch.Tensor,
+        distance: torch.Tensor,
+        mesh_scale: torch.Tensor,
+        transform_matrix: Optional[torch.Tensor] = None,
+        BHWC: bool = True,
+    ) -> torch.Tensor:
+        if BHWC:
+            B, H, W, C = features_map.shape
+        else:
+            B, C, H, W = features_map.shape
+
+        grid_points = self.grid_points
+        grid_points = grid_points.expand(B, -1, -1)
+        grid_points = grid_points / mesh_scale.unsqueeze(-1).unsqueeze(-1) / 2  # Scale alignment
+
+        if transform_matrix is None:
+            transform_matrix = self.front_view_transform_matrix
+            transform_matrix = transform_matrix.expand(B, -1, -1).clone()
+            transform_matrix[:, 1, 3] = -distance  # Set camera distance
+        # else: use the provided per-view calc_mat directly
+
+        image_points, depth, valid_mask = project_points_to_image_batch(
+            grid_points, transform_matrix, camera_angle_x, self.image_resolution
+        )
+
+        image_points_norm = (image_points + 0.5) / self.image_resolution * 2 - 1
+
+        if BHWC:
+            features_map = features_map.permute(0, 3, 1, 2)  # [B, C, H, W]
+
+        x = sample_features(features_map, image_points_norm)  # [B, C, K]
+        x = x.permute(0, 2, 1)  # [B, K, C]
+        return x
+
+
+def compute_relative_calc_mat(
+    transform_matrix: torch.Tensor,
+    distance: torch.Tensor,
+    front_view_transform_matrix: torch.Tensor,
+) -> torch.Tensor:
+    """
+    Compute the per-view projection matrix (calc_mat) that maps each view into
+    the coordinate frame where the MAIN view (index 0) is snapped to the fixed
+    front-view pose F (with F's camera distance set to the main view's distance).
+
+    calc_mat_i = F @ inv(C_0) @ C_i
+
+    where C_i = transform_matrix[:, i] (c2w). For i == 0, calc_mat_0 == F exactly,
+    which reproduces the single-view behavior.
+
+    Args:
+        transform_matrix: [B, V, 4, 4] c2w matrices (index 0 = main view).
+        distance: [B, V] camera distances (only index 0 used for F).
+        front_view_transform_matrix: [4, 4] the canonical front-view c2w.
+
+    Returns:
+        calc_mat: [B, V, 4, 4]
+    """
+    B, V = transform_matrix.shape[:2]
+    device = transform_matrix.device
+
+    # Fixed front matrix with main-view distance in the translation slot.
+    F = front_view_transform_matrix.to(device).unsqueeze(0).expand(B, -1, -1).clone()  # [B,4,4]
+    F[:, 1, 3] = -distance[:, 0]
+    F = F.unsqueeze(1)  # [B,1,4,4]
+
+    C0 = transform_matrix[:, 0:1]  # [B,1,4,4]
+
+    # Do the matrix math in fp32 for numerical stability (inv is sensitive).
+    with torch.amp.autocast('cuda', enabled=False):
+        C0f = C0.float().expand(B, V, 4, 4).reshape(B * V, 4, 4)
+        Cif = transform_matrix.float().reshape(B * V, 4, 4)
+        Ff = F.float().expand(B, V, 4, 4).reshape(B * V, 4, 4)
+        rel = torch.bmm(torch.linalg.inv(C0f), Cif)   # inv(C_0) @ C_i
+        calc = torch.bmm(Ff, rel)                      # F @ rel
+    calc_mat = calc.reshape(B, V, 4, 4)
+    return calc_mat
 
 
 # =============================================================================
@@ -624,6 +720,152 @@ class DinoV3ProjFeatureExtractor(nn.Module):
             save_dir=save_dir,
             prefix=prefix,
         )
+
+
+# =============================================================================
+# Multi-View DINOv3 Feature Extractor with Projection
+# =============================================================================
+
+class DinoV3ProjMultiViewFeatureExtractor(DinoV3ProjFeatureExtractor):
+    """
+    Multi-view DINOv3 feature extractor with view-aligned projection.
+
+    Reuses DinoV3ProjFeatureExtractor's DINOv3 backbone + NAF, but:
+    - accepts multi-view inputs: image [B, V, 3, H, W], camera_angle_x [B, V],
+      distance [B, V], mesh_scale [B], transform_matrix [B, V, 4, 4] (c2w, index0=main).
+    - computes per-view calc_mat = F @ inv(C_0) @ C_i and projects the SAME 3D grid
+      through each view's relative pose (uses ProjGridMV).
+    - fuses the V views according to `multiview_fusion`:
+        * "average":  z_proj -> [B, R^3, C] (mean over V, matches single-view);
+                      z_global -> [B, 1+num_reg, C] (mean over V).
+        * "attention": z_proj -> [B, R^3, V, C] (keep V dim for per-voxel attn);
+                      z_global -> [B, V*(1+num_reg), C] (concat over V as longer KV).
+
+    proj_channels is inherited (embed_dim, or embed_dim*2 with NAF), so downstream
+    per-block proj_linear / proj cross-attn weights are compatible with single-view.
+    """
+
+    def __init__(self, *args, multiview_fusion: str = "average", **kwargs):
+        super().__init__(*args, **kwargs)
+        assert multiview_fusion in ("average", "attention"), \
+            f"multiview_fusion must be 'average' or 'attention', got {multiview_fusion}"
+        self.multiview_fusion = multiview_fusion
+        # Replace proj_grid with the multi-view variant that accepts calc_mat.
+        self.proj_grid = ProjGridMV(
+            grid_resolution=self.grid_resolution,
+            image_resolution=self.image_size,
+        )
+
+    def _project_single_view(self, z_patchtokens_spatial, image_for_naf,
+                             camera_angle_x_v, distance_v, mesh_scale_v, calc_mat_v):
+        """Project one view's DINOv3 features to the 3D grid. Returns [b, R^3, C]."""
+        z_proj_lr = self.proj_grid(
+            z_patchtokens_spatial, camera_angle_x_v, distance_v, mesh_scale_v, calc_mat_v
+        )
+        if self.use_naf_upsample:
+            self._load_naf()
+            lr_features_bchw = z_patchtokens_spatial.permute(0, 3, 1, 2)
+            hr_features = self.naf_model(image_for_naf, lr_features_bchw, self.naf_target_size)
+            z_proj_hr = self.proj_grid(
+                hr_features, camera_angle_x_v, distance_v, mesh_scale_v, calc_mat_v, BHWC=False
+            )
+            return torch.cat([z_proj_lr, z_proj_hr], dim=-1)  # [b, R^3, 2D]
+        return z_proj_lr  # [b, R^3, D]
+
+    def forward(
+        self,
+        image: torch.Tensor,
+        camera_angle_x: Optional[torch.Tensor] = None,
+        distance: Optional[torch.Tensor] = None,
+        mesh_scale: Optional[torch.Tensor] = None,
+        transform_matrix: Optional[torch.Tensor] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Args:
+            image: [B, V, 3, H, W]
+            camera_angle_x: [B, V]
+            distance: [B, V]
+            mesh_scale: [B]
+            transform_matrix: [B, V, 4, 4] (c2w, index 0 = main view)
+        Returns:
+            (z_global, z_proj) — shapes depend on multiview_fusion (see class doc).
+        """
+        assert image.ndim == 5, f"Expected image [B,V,3,H,W], got {tuple(image.shape)}"
+        B, V = image.shape[:2]
+        if camera_angle_x is None or distance is None or mesh_scale is None or transform_matrix is None:
+            raise ValueError("camera_angle_x, distance, mesh_scale, transform_matrix must be provided")
+
+        # Compute per-view calc_mat = F @ inv(C_0) @ C_i  -> [B, V, 4, 4]
+        calc_mat = compute_relative_calc_mat(
+            transform_matrix, distance, self.proj_grid.front_view_transform_matrix
+        )
+
+        # Flatten B*V and run DINOv3 once.
+        img_flat = image.reshape(B * V, *image.shape[2:])  # [B*V, 3, H, W]
+        if self.use_naf_upsample:
+            image_for_naf = img_flat.clone()
+        img_norm = self.transform(img_flat)
+
+        with torch.no_grad():
+            z = self.extract_features(img_norm)
+            z_clstoken = z[:, 0:1]
+            num_reg = getattr(self.model.config, 'num_register_tokens', 4)
+            z_regtokens = z[:, 1:1 + num_reg]
+            z_patchtokens = z[:, 1 + num_reg:]
+            z_patchtokens_spatial = z_patchtokens.reshape(
+                B * V, self.patch_number, self.patch_number, -1
+            )
+
+            camera_angle_x_flat = camera_angle_x.reshape(B * V)
+            distance_flat = distance.reshape(B * V)
+            # mesh_scale is shared per object -> expand to per-view then flatten.
+            mesh_scale_flat = mesh_scale[:, None].expand(B, V).reshape(B * V)
+            calc_mat_flat = calc_mat.reshape(B * V, 4, 4)
+
+            # Project each view (loop over V to bound peak memory).
+            # A per-view projection is [B, R^3, C], which at R=64 / C=2048 is 2 GiB
+            # in fp32. Averaging accumulates in place so peak stays at one view
+            # instead of growing with V (a list + stack would cost 2*V*2 GiB, i.e.
+            # ~40 GiB at V=9, which both starves the denoiser and makes the step's
+            # peak depend on N -- something the elastic memory controller models
+            # purely from token count and therefore mispredicts).
+            fuse_by_average = self.multiview_fusion == "average"
+            z_proj_acc = None                     # average: running sum
+            per_view_proj = [] if not fuse_by_average else None  # attention: keep V
+            for v in range(V):
+                idx = torch.arange(v, B * V, V, device=z.device)
+                img_naf_v = image_for_naf[idx] if self.use_naf_upsample else None
+                z_view = self._project_single_view(
+                    z_patchtokens_spatial[idx],
+                    img_naf_v,
+                    camera_angle_x_flat[idx],
+                    distance_flat[idx],
+                    mesh_scale_flat[idx],
+                    calc_mat_flat[idx],
+                )
+                if fuse_by_average:
+                    if z_proj_acc is None:
+                        # Without NAF the projection is a permuted view, so make the
+                        # accumulator contiguous before adding into it in place.
+                        z_proj_acc = z_view.contiguous()
+                    else:
+                        z_proj_acc.add_(z_view)
+                        del z_view
+                else:
+                    per_view_proj.append(z_view)
+
+            # z_global per view: [B, V, 1+num_reg, D]
+            z_global_all = torch.cat([z_clstoken, z_regtokens], dim=1)  # [B*V, 1+num_reg, D]
+            z_global_all = z_global_all.reshape(B, V, z_global_all.shape[-2], z_global_all.shape[-1])
+
+            if fuse_by_average:
+                z_proj = z_proj_acc.div_(V)                             # [B, R^3, C]
+                z_global = z_global_all.mean(dim=1)                     # [B, 1+num_reg, D]
+            else:  # attention
+                z_proj = torch.stack(per_view_proj, dim=2)  # [B, R^3, V, C]
+                z_global = z_global_all.reshape(B, V * z_global_all.shape[2], z_global_all.shape[3])
+
+        return z_global, z_proj
 
 
 # =============================================================================

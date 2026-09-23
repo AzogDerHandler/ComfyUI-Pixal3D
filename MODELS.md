@@ -22,6 +22,23 @@ ss_flow 5,359,822,584 · img2shape_512 5,546,764,048 · img2shape_1024
 5,546,764,048 · imgshape2tex_1024 5,546,960,656 · shape_dec 948,490,494 ·
 tex_dec 948,458,812 · ss_dec 147,591,972 · pipeline.json 4,068.
 
+## Multi-view weights (optional)
+
+Only the multi-view nodes use these; they download on the first multi-view run
+into the same `pixal3d/` folder (not yet on the volume as of 2026-09-23):
+
+| File (under `ComfyUI/models/pixal3d/`) | Bytes |
+|---|---|
+| `pipeline_mv.json` | ~4 KB |
+| `ckpts/ss_flow_img_dit_1_3B_64_bf16_mv.safetensors` | 5,359,822,584 |
+| `ckpts/slat_flow_img2shape_dit_1_3B_512_bf16_mv.safetensors` | 5,546,764,048 |
+| `ckpts/slat_flow_img2shape_dit_1_3B_1024_bf16_mv.safetensors` | 5,546,764,048 |
+| `ckpts/slat_flow_imgshape2tex_dit_1_3B_1024_bf16_mv.safetensors` | 5,546,960,656 |
+| `ckpts/*_mv.json` (4) | ~0.5 KB each |
+
+~22 GB total. The decoders are shared with single-view. Deleting the unused
+`models/Pixal3D/RMBG-2.0/` (~10.4 GB, below) frees half of that.
+
 ## Legacy leftovers under `models/Pixal3D/` (ignored by this pack)
 
 | Path | Size | Note |

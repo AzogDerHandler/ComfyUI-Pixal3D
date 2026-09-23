@@ -3,12 +3,13 @@
 The training-time classes (BasicTrainer, FlowMatchingTrainer, ..VaeTrainer,
 text/image-conditioned mixins, etc.) were removed for the ComfyUI-Pixal3D
 wrapper since none of them are touched during pipeline.run(). Only the
-DinoV3ProjFeatureExtractor is loaded, lazily via __getattr__ below.
+DinoV3Proj{,MultiView}FeatureExtractor are loaded, lazily via __getattr__ below.
 """
 import importlib
 
 __attributes = {
     "DinoV3ProjFeatureExtractor": "flow_matching.mixins.image_conditioned_proj",
+    "DinoV3ProjMultiViewFeatureExtractor": "flow_matching.mixins.image_conditioned_proj",
 }
 
 __all__ = list(__attributes.keys())

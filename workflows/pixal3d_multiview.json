@@ -1,0 +1,1083 @@
+{
+  "id": "32160d0b-4b4e-499b-a9ee-624e3f2ed593",
+  "revision": 0,
+  "last_node_id": 37,
+  "last_link_id": 34,
+  "nodes": [
+    {
+      "id": 36,
+      "type": "Note",
+      "pos": [
+        40,
+        60
+      ],
+      "size": [
+        330,
+        190
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "properties": {},
+      "widgets_values": [
+        "Pixal3D multi-view.\n\nAs shipped this runs upstream's bundled 4-view example (empty folder_path) -- a known-good test.\n\nYour own frames: unmute 'Pixal3D Multi-View Input' (Ctrl+M), feed the frame batch + a MASK batch (rem-bg node), set fov/azimuths/elevations, and connect its 'views' to Generate Mesh (Multi-View) instead of the folder loader. Check preview + report first: red = what the rig can't explain.\n\nFirst multi-view run downloads ~22 GB of *_mv weights."
+      ],
+      "color": "#432",
+      "bgcolor": "#653"
+    },
+    {
+      "id": 29,
+      "type": "Pixal3DLoadMultiViewFolder",
+      "pos": [
+        40,
+        280
+      ],
+      "size": [
+        330,
+        110
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "folder_path",
+          "name": "folder_path",
+          "type": "STRING",
+          "widget": {
+            "name": "folder_path"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "num_views",
+          "name": "num_views",
+          "type": "INT",
+          "widget": {
+            "name": "num_views"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "views",
+          "name": "views",
+          "type": "PIXAL3D_MV_VIEWS",
+          "links": [
+            32
+          ]
+        },
+        {
+          "localized_name": "preview",
+          "name": "preview",
+          "type": "IMAGE",
+          "links": [
+            33
+          ]
+        },
+        {
+          "localized_name": "report",
+          "name": "report",
+          "type": "STRING",
+          "links": [
+            34
+          ]
+        }
+      ],
+      "properties": {
+        "aux_id": "AzogDerSchaender/ComfyUI-Pixal3D",
+        "Node name for S&R": "Pixal3DLoadMultiViewFolder"
+      },
+      "widgets_values": [
+        "",
+        0
+      ]
+    },
+    {
+      "id": 37,
+      "type": "Pixal3DMultiViewInput",
+      "pos": [
+        40,
+        420
+      ],
+      "size": [
+        330,
+        380
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 2,
+      "inputs": [
+        {
+          "localized_name": "images",
+          "name": "images",
+          "type": "IMAGE",
+          "link": null
+        },
+        {
+          "localized_name": "fov_deg",
+          "name": "fov_deg",
+          "type": "FLOAT",
+          "widget": {
+            "name": "fov_deg"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "azimuths",
+          "name": "azimuths",
+          "type": "STRING",
+          "widget": {
+            "name": "azimuths"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "elevations",
+          "name": "elevations",
+          "type": "STRING",
+          "widget": {
+            "name": "elevations"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "view_at_plus_90",
+          "name": "view_at_plus_90",
+          "type": "COMBO",
+          "widget": {
+            "name": "view_at_plus_90"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "front_index",
+          "name": "front_index",
+          "type": "INT",
+          "widget": {
+            "name": "front_index"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "framing",
+          "name": "framing",
+          "type": "COMBO",
+          "widget": {
+            "name": "framing"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "masks",
+          "name": "masks",
+          "type": "MASK",
+          "link": null
+        },
+        {
+          "localized_name": "invert_mask",
+          "name": "invert_mask",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "invert_mask"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "grid_fill_margin",
+          "name": "grid_fill_margin",
+          "type": "FLOAT",
+          "widget": {
+            "name": "grid_fill_margin"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "distance",
+          "name": "distance",
+          "type": "FLOAT",
+          "widget": {
+            "name": "distance"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "mesh_scale",
+          "name": "mesh_scale",
+          "type": "FLOAT",
+          "widget": {
+            "name": "mesh_scale"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "views",
+          "name": "views",
+          "type": "PIXAL3D_MV_VIEWS",
+          "links": null
+        },
+        {
+          "localized_name": "preview",
+          "name": "preview",
+          "type": "IMAGE",
+          "links": null
+        },
+        {
+          "localized_name": "report",
+          "name": "report",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "properties": {
+        "aux_id": "AzogDerSchaender/ComfyUI-Pixal3D",
+        "Node name for S&R": "Pixal3DMultiViewInput"
+      },
+      "widgets_values": [
+        20.0,
+        "auto",
+        "0",
+        "front_image_right_side",
+        0,
+        "auto_fit",
+        false,
+        1.1,
+        3.0,
+        1.0
+      ]
+    },
+    {
+      "id": 31,
+      "type": "PreviewImage",
+      "pos": [
+        400,
+        60
+      ],
+      "size": [
+        300,
+        330
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "images",
+          "name": "images",
+          "type": "IMAGE",
+          "link": 33
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "PreviewImage"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 35,
+      "type": "PreviewAny",
+      "pos": [
+        400,
+        420
+      ],
+      "size": [
+        300,
+        200
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "source",
+          "name": "source",
+          "type": "*",
+          "link": 34
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "STRING",
+          "name": "STRING",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "PreviewAny"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 7,
+      "type": "Pixal3DLoadPipeline",
+      "pos": [
+        400,
+        660
+      ],
+      "size": [
+        270,
+        82
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "pipeline_type",
+          "name": "pipeline_type",
+          "type": "COMBO",
+          "widget": {
+            "name": "pipeline_type"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "attn_backend",
+          "name": "attn_backend",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "attn_backend"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "vram_mode",
+          "name": "vram_mode",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "vram_mode"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "pipeline",
+          "name": "pipeline",
+          "type": "PIXAL3D_PIPELINE",
+          "links": [
+            7
+          ]
+        }
+      ],
+      "properties": {
+        "aux_id": "AzogDerSchaender/ComfyUI-Pixal3D",
+        "Node name for S&R": "Pixal3DLoadPipeline"
+      },
+      "widgets_values": [
+        "1536_cascade",
+        "auto",
+        "auto"
+      ]
+    },
+    {
+      "id": 30,
+      "type": "Pixal3DGenerateMeshMV",
+      "pos": [
+        720,
+        90
+      ],
+      "size": [
+        380,
+        520
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "pipeline",
+          "name": "pipeline",
+          "type": "PIXAL3D_PIPELINE",
+          "link": 7
+        },
+        {
+          "localized_name": "views",
+          "name": "views",
+          "type": "PIXAL3D_MV_VIEWS",
+          "link": 32
+        },
+        {
+          "localized_name": "seed",
+          "name": "seed",
+          "type": "INT",
+          "widget": {
+            "name": "seed"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "max_num_tokens",
+          "name": "max_num_tokens",
+          "shape": 7,
+          "type": "INT",
+          "widget": {
+            "name": "max_num_tokens"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "ss_steps",
+          "name": "ss_steps",
+          "shape": 7,
+          "type": "INT",
+          "widget": {
+            "name": "ss_steps"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "ss_guidance",
+          "name": "ss_guidance",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "ss_guidance"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "ss_rescale",
+          "name": "ss_rescale",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "ss_rescale"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "ss_rescale_t",
+          "name": "ss_rescale_t",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "ss_rescale_t"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "shape_steps",
+          "name": "shape_steps",
+          "shape": 7,
+          "type": "INT",
+          "widget": {
+            "name": "shape_steps"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "shape_guidance",
+          "name": "shape_guidance",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "shape_guidance"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "shape_rescale",
+          "name": "shape_rescale",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "shape_rescale"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "shape_rescale_t",
+          "name": "shape_rescale_t",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "shape_rescale_t"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "tex_steps",
+          "name": "tex_steps",
+          "shape": 7,
+          "type": "INT",
+          "widget": {
+            "name": "tex_steps"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "tex_guidance",
+          "name": "tex_guidance",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "tex_guidance"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "tex_rescale",
+          "name": "tex_rescale",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "tex_rescale"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "tex_rescale_t",
+          "name": "tex_rescale_t",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "tex_rescale_t"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "mesh",
+          "name": "mesh",
+          "type": "TRIMESH",
+          "links": [
+            22,
+            26
+          ]
+        },
+        {
+          "localized_name": "voxelgrid",
+          "name": "voxelgrid",
+          "type": "PIXAL3D_VOXELGRID",
+          "links": [
+            21
+          ]
+        }
+      ],
+      "properties": {
+        "aux_id": "AzogDerSchaender/ComfyUI-Pixal3D",
+        "Node name for S&R": "Pixal3DGenerateMeshMV"
+      },
+      "widgets_values": [
+        42,
+        "fixed",
+        49152,
+        12,
+        7.5,
+        0.7,
+        5,
+        12,
+        7.5,
+        0.5,
+        3,
+        12,
+        1,
+        0,
+        3
+      ]
+    },
+    {
+      "id": 24,
+      "type": "Pixal3DProcessMesh",
+      "pos": [
+        1120,
+        90
+      ],
+      "size": [
+        294,
+        370
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "trimesh",
+          "name": "trimesh",
+          "type": "TRIMESH",
+          "link": 26
+        },
+        {
+          "localized_name": "target_face_count",
+          "name": "target_face_count",
+          "type": "INT",
+          "widget": {
+            "name": "target_face_count"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "remesh",
+          "name": "remesh",
+          "shape": 7,
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "remesh"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "remesh_resolution",
+          "name": "remesh_resolution",
+          "shape": 7,
+          "type": "INT",
+          "widget": {
+            "name": "remesh_resolution"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "remesh_band",
+          "name": "remesh_band",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "remesh_band"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "remove_inner_faces",
+          "name": "remove_inner_faces",
+          "shape": 7,
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "remove_inner_faces"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "fill_holes",
+          "name": "fill_holes",
+          "shape": 7,
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "fill_holes"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "fill_holes_perimeter",
+          "name": "fill_holes_perimeter",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "fill_holes_perimeter"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "floater_threshold",
+          "name": "floater_threshold",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "floater_threshold"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "weld_vertices",
+          "name": "weld_vertices",
+          "shape": 7,
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "weld_vertices"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "weld_digits",
+          "name": "weld_digits",
+          "shape": 7,
+          "type": "INT",
+          "widget": {
+            "name": "weld_digits"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "chart_cone_angle",
+          "name": "chart_cone_angle",
+          "shape": 7,
+          "type": "FLOAT",
+          "widget": {
+            "name": "chart_cone_angle"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "chart_refine_iterations",
+          "name": "chart_refine_iterations",
+          "shape": 7,
+          "type": "INT",
+          "widget": {
+            "name": "chart_refine_iterations"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "chart_global_iterations",
+          "name": "chart_global_iterations",
+          "shape": 7,
+          "type": "INT",
+          "widget": {
+            "name": "chart_global_iterations"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "chart_smooth_strength",
+          "name": "chart_smooth_strength",
+          "shape": 7,
+          "type": "INT",
+          "widget": {
+            "name": "chart_smooth_strength"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "mesh",
+          "name": "mesh",
+          "type": "TRIMESH",
+          "links": [
+            27
+          ]
+        }
+      ],
+      "properties": {
+        "aux_id": "AzogDerSchaender/ComfyUI-Pixal3D",
+        "Node name for S&R": "Pixal3DProcessMesh"
+      },
+      "widgets_values": [
+        200000,
+        true,
+        512,
+        1,
+        true,
+        true,
+        0.03,
+        0.001,
+        true,
+        4,
+        90,
+        0,
+        1,
+        1
+      ]
+    },
+    {
+      "id": 22,
+      "type": "Pixal3DRasterizePBR",
+      "pos": [
+        1430,
+        95
+      ],
+      "size": [
+        340,
+        220
+      ],
+      "flags": {},
+      "order": 8,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "trimesh",
+          "name": "trimesh",
+          "type": "TRIMESH",
+          "link": 27
+        },
+        {
+          "localized_name": "voxelgrid",
+          "name": "voxelgrid",
+          "type": "PIXAL3D_VOXELGRID",
+          "link": 21
+        },
+        {
+          "localized_name": "original_mesh",
+          "name": "original_mesh",
+          "shape": 7,
+          "type": "TRIMESH",
+          "link": 22
+        },
+        {
+          "localized_name": "texture_size",
+          "name": "texture_size",
+          "type": "INT",
+          "widget": {
+            "name": "texture_size"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "double_sided",
+          "name": "double_sided",
+          "shape": 7,
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "double_sided"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "bake_mode",
+          "name": "bake_mode",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "bake_mode"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "debug_dump",
+          "name": "debug_dump",
+          "shape": 7,
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "debug_dump"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "mesh",
+          "name": "mesh",
+          "type": "TRIMESH",
+          "links": [
+            24
+          ]
+        }
+      ],
+      "properties": {
+        "aux_id": "AzogDerSchaender/ComfyUI-Pixal3D",
+        "Node name for S&R": "Pixal3DRasterizePBR"
+      },
+      "widgets_values": [
+        2048,
+        false,
+        "pbr",
+        false
+      ]
+    },
+    {
+      "id": 23,
+      "type": "Pixal3DExportGLB",
+      "pos": [
+        1434,
+        350
+      ],
+      "size": [
+        320,
+        100
+      ],
+      "flags": {},
+      "order": 9,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "trimesh",
+          "name": "trimesh",
+          "type": "TRIMESH",
+          "link": 24
+        },
+        {
+          "localized_name": "filename_prefix",
+          "name": "filename_prefix",
+          "shape": 7,
+          "type": "STRING",
+          "widget": {
+            "name": "filename_prefix"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "glb_filepath",
+          "name": "glb_filepath",
+          "type": "STRING",
+          "links": [
+            25
+          ]
+        }
+      ],
+      "properties": {
+        "aux_id": "AzogDerSchaender/ComfyUI-Pixal3D",
+        "Node name for S&R": "Pixal3DExportGLB"
+      },
+      "widgets_values": [
+        "pixal3d_mv"
+      ]
+    },
+    {
+      "id": 16,
+      "type": "Preview3D",
+      "pos": [
+        1785,
+        95
+      ],
+      "size": [
+        400,
+        550
+      ],
+      "flags": {},
+      "order": 10,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "camera_info",
+          "name": "camera_info",
+          "shape": 7,
+          "type": "LOAD3D_CAMERA",
+          "link": null
+        },
+        {
+          "localized_name": "bg_image",
+          "name": "bg_image",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": null
+        },
+        {
+          "localized_name": "model_file",
+          "name": "model_file",
+          "type": "STRING,FILE_3D_GLB,FILE_3D_GLTF,FILE_3D_FBX,FILE_3D_OBJ,FILE_3D_STL,FILE_3D_USDZ,FILE_3D",
+          "widget": {
+            "name": "model_file"
+          },
+          "link": 25
+        },
+        {
+          "localized_name": "image",
+          "name": "image",
+          "type": "PREVIEW_3D",
+          "widget": {
+            "name": "image"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.21.0",
+        "Node name for S&R": "Preview3D"
+      },
+      "widgets_values": [
+        "",
+        ""
+      ]
+    }
+  ],
+  "links": [
+    [
+      7,
+      7,
+      0,
+      30,
+      0,
+      "PIXAL3D_PIPELINE"
+    ],
+    [
+      32,
+      29,
+      0,
+      30,
+      1,
+      "PIXAL3D_MV_VIEWS"
+    ],
+    [
+      33,
+      29,
+      1,
+      31,
+      0,
+      "IMAGE"
+    ],
+    [
+      34,
+      29,
+      2,
+      35,
+      0,
+      "STRING"
+    ],
+    [
+      21,
+      30,
+      1,
+      22,
+      1,
+      "PIXAL3D_VOXELGRID"
+    ],
+    [
+      22,
+      30,
+      0,
+      22,
+      2,
+      "TRIMESH"
+    ],
+    [
+      24,
+      22,
+      0,
+      23,
+      0,
+      "TRIMESH"
+    ],
+    [
+      25,
+      23,
+      0,
+      16,
+      2,
+      "STRING"
+    ],
+    [
+      26,
+      30,
+      0,
+      24,
+      0,
+      "TRIMESH"
+    ],
+    [
+      27,
+      24,
+      0,
+      22,
+      0,
+      "TRIMESH"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 0.8,
+      "offset": [
+        0,
+        120
+      ]
+    }
+  },
+  "version": 0.4
+}
