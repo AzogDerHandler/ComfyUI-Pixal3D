@@ -44,9 +44,8 @@ ALTERNATIVE_MARGIN = 0.02
 DIRECTIONS = ("front_image_right_side", "front_image_left_side")
 FRAMINGS = ("auto_fit", "upstream_rig", "manual")
 ALIGNS = ("bbox_height", "none")
-# bbox_height alignment: square canvas, widest object bbox at 1/ALIGN_MARGIN of it.
+# bbox_height alignment: square canvas, largest object bbox side at 1/margin of it.
 ALIGN_CANVAS = 1024
-ALIGN_MARGIN = 1.15
 
 
 # ============================================================================
@@ -230,7 +229,7 @@ def object_bbox(alpha: np.ndarray, thresh: float = 0.5) -> Tuple[int, int, int, 
 
 
 def align_by_height(views: Sequence[Tuple[np.ndarray, np.ndarray]], fov_x: float,
-                    size: int = ALIGN_CANVAS, margin: float = ALIGN_MARGIN):
+                    margin: float, size: int = ALIGN_CANVAS):
     """Rescale + recenter every view so the object's bbox height matches, on one square canvas.
 
     On an eye-level orbit the object's vertical extent looks the same from every
@@ -316,21 +315,33 @@ def rig_consistency(alphas: Sequence[np.ndarray], calc: torch.Tensor, fov: torch
     return coverage, cover, sil
 
 
-def _cube_edges(mesh_scale: float):
+def _grid_slice(calc_v: torch.Tensor, mesh_scale: float) -> List[torch.Tensor]:
+    """Outline of the voxel grid where the plane through the orbit center, facing camera
+    `calc_v`, cuts it -- the grid's extent at the object's depth, as ordered 3D points."""
     h = 0.5 / mesh_scale
     corners = torch.tensor([[x, y, z] for x in (-h, h) for y in (-h, h) for z in (-h, h)])
-    edges = [(i, j) for i in range(8) for j in range(i + 1, 8)
-             if int((corners[i] != corners[j]).sum()) == 1]
-    return corners, edges
+    right, up, back = calc_v[:3, 0], calc_v[:3, 1], calc_v[:3, 2]
+    pts = []
+    for i in range(8):
+        for j in range(i + 1, 8):
+            if int((corners[i] != corners[j]).sum()) != 1:
+                continue
+            di, dj = float(corners[i] @ back), float(corners[j] @ back)
+            if di * dj > 0 or di == dj:
+                continue
+            p = corners[i] + di / (di - dj) * (corners[j] - corners[i])
+            if all(float((p - q).abs().max()) > 1e-6 for q in pts):
+                pts.append(p)
+    return sorted(pts, key=lambda p: math.atan2(float(p @ up), float(p @ right)))
 
 
 def render_preview(rgbs: Sequence[np.ndarray], alphas: Sequence[np.ndarray], calc: torch.Tensor,
                    fov: torch.Tensor, mesh_scale: float, cover: torch.Tensor, sil: torch.Tensor,
                    labels: Sequence[str], size: int = 512) -> torch.Tensor:
     """[V, size, size, 3] preview: premultiplied view, silhouette the rig can't explain in
-    red, voxel-grid bounds in yellow, the grid's +X face (object's left) in green."""
-    corners, edges = _cube_edges(mesh_scale)
-    cxy, cdepth = project(corners, calc, fov, size)
+    red, the voxel grid's outline at the object's depth in yellow (the object must fit
+    inside), its +X side (object's left) in green."""
+    h = 0.5 / mesh_scale
     try:
         font = ImageFont.load_default(size=max(12, size // 28))
     except TypeError:  # Pillow < 10.1
@@ -343,11 +354,16 @@ def render_preview(rgbs: Sequence[np.ndarray], alphas: Sequence[np.ndarray], cal
         base[miss] = base[miss] * 0.35 + np.array([0.65, 0.0, 0.0])
         img = Image.fromarray((base.clip(0, 1) * 255).astype(np.uint8))
         draw = ImageDraw.Draw(img)
-        if bool((cdepth[v] > 0).all()):
-            for i, j in edges:
-                on_left = float(corners[i, 0]) > 0 and float(corners[j, 0]) > 0
-                draw.line([tuple(cxy[v, i].tolist()), tuple(cxy[v, j].tolist())],
+        outline = _grid_slice(calc[v], mesh_scale)
+        if len(outline) >= 3:
+            oxy, _ = project(torch.stack(outline), calc[v:v + 1], fov[v:v + 1], size)
+            for k in range(len(outline)):
+                p, q = outline[k], outline[(k + 1) % len(outline)]
+                on_left = float(p[0]) > h - 1e-5 and float(q[0]) > h - 1e-5
+                draw.line([tuple(oxy[0, k].tolist()), tuple(oxy[0, (k + 1) % len(outline)].tolist())],
                           fill=(60, 220, 60) if on_left else (235, 200, 40), width=2)
+        box = draw.textbbox((8, 6), labels[v], font=font, stroke_width=2)
+        draw.rectangle((box[0] - 4, box[1] - 3, box[2] + 4, box[3] + 3), fill=(0, 0, 0))
         draw.text((8, 6), labels[v], fill=(255, 255, 255), font=font, stroke_width=2, stroke_fill=(0, 0, 0))
         out.append(torch.from_numpy(np.asarray(img, dtype=np.float32) / 255.0))
     return torch.stack(out)
@@ -457,7 +473,11 @@ def views_from_orbit(images: torch.Tensor, masks: Optional[torch.Tensor], invert
         if any(abs(e) > 1e-6 for e in el):
             notes.append("align_views=bbox_height assumes an eye-level orbit; with nonzero elevation the "
                          "object's height legitimately differs per view -- use align_views=none")
-        aligned, fov_canvas, align_notes = align_by_height(views, fov_in)
+        # Leave the voxel grid (object at 1/margin of it under auto_fit) at 1/1.1 of the
+        # frame, like upstream's example rig. With the grid reaching the frame edge, the
+        # front/back views can't veto what a side view projects along its rays near the
+        # grid walls -- seen as thin sole-level plates at the grid's side walls.
+        aligned, fov_canvas, align_notes = align_by_height(views, fov_in, UPSTREAM_RIG_MARGIN * margin)
         notes += align_notes
         rgbs = [v[0] for v in aligned]
         alphas = [v[1] for v in aligned]

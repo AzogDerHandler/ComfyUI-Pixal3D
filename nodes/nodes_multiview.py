@@ -31,9 +31,10 @@ def _views_outputs():
         io.Image.Output(
             display_name="preview",
             tooltip=(
-                "Each view as the model sees it (premultiplied, square). Yellow: voxel-grid "
-                "bounds; green: the grid's +X face (object's left). Red: silhouette the rig "
-                "can't explain -- wrong rotation direction, FOV, elevation or framing."
+                "Each view as the model sees it (premultiplied, square). Yellow: the voxel "
+                "grid's outline at the object's depth -- the object must fit inside; green: its "
+                "+X side (object's left). Red: silhouette the rig can't explain -- wrong "
+                "rotation direction, FOV, elevation or framing."
             ),
         ),
         io.String.Output(display_name="report"),

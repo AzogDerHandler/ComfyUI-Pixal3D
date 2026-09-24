@@ -130,8 +130,9 @@ at 1/1.1 of the frame, distance `1.1·0.5/tan(fov/2)`).
 
 **Rig check.** Before the cascade, the input node carves a visual hull from all
 silhouettes through the rig and reprojects it into every view. The `preview`
-shows what the rig can't explain in red (plus the voxel-grid bounds in yellow,
-its +X face — the object's left — in green); the `report` gives per-view
+shows what the rig can't explain in red (plus the voxel grid's outline at the
+object's depth in yellow — the object must fit inside — with its +X side, the
+object's left, in green); the `report` gives per-view
 silhouette coverage (a consistent rig scores ~95–100%) and flags a flipped
 rotation direction, off-center or clipped objects, and a non-front view 0. It
 is cheap — check it before spending minutes on a run.
